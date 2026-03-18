@@ -54,7 +54,7 @@ describe('restoreCommand', () => {
 
     mockContext = createMockCommandContext({
       services: {
-        config: mockConfig,
+        agentContext: mockConfig,
         git: mockGitService,
       },
     });

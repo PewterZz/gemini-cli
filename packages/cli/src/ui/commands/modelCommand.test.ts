@@ -37,7 +37,7 @@ describe('modelCommand', () => {
     }
 
     const mockRefreshUserQuota = vi.fn();
-    mockContext.services.config = {
+    mockContext.services.agentContext = {
       refreshUserQuota: mockRefreshUserQuota,
     } as unknown as Config;
 
@@ -66,7 +66,7 @@ describe('modelCommand', () => {
         (c) => c.name === 'manage',
       );
       const mockRefreshUserQuota = vi.fn();
-      mockContext.services.config = {
+      mockContext.services.agentContext = {
         refreshUserQuota: mockRefreshUserQuota,
       } as unknown as Config;
 
@@ -84,7 +84,7 @@ describe('modelCommand', () => {
       expect(setCommand).toBeDefined();
 
       const mockSetModel = vi.fn();
-      mockContext.services.config = {
+      mockContext.services.agentContext = {
         setModel: mockSetModel,
         getHasAccessToPreviewModel: vi.fn().mockReturnValue(true),
         getUserId: vi.fn().mockReturnValue('test-user'),
@@ -116,7 +116,7 @@ describe('modelCommand', () => {
         (c) => c.name === 'set',
       );
       const mockSetModel = vi.fn();
-      mockContext.services.config = {
+      mockContext.services.agentContext = {
         setModel: mockSetModel,
         getHasAccessToPreviewModel: vi.fn().mockReturnValue(true),
         getUserId: vi.fn().mockReturnValue('test-user'),
