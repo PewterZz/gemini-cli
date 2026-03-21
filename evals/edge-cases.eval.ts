@@ -104,7 +104,8 @@ module.exports = { add, broken };
       // Should use ls or glob to list files
       const discoveryCalls = toolLogs.filter(
         (log) =>
-          log.toolRequest.name === 'ls' || log.toolRequest.name === 'glob',
+          log.toolRequest.name === 'list_directory' ||
+          log.toolRequest.name === 'glob',
       );
       expect(discoveryCalls.length).toBeGreaterThanOrEqual(1);
     },

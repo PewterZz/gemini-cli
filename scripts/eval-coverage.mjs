@@ -25,7 +25,7 @@ const TOOL_NAMES = [
   'get_internal_docs',
   'glob',
   'grep_search',
-  'ls',
+  'list_directory',
   'read_file',
   'read_many_files',
   'replace',

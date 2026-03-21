@@ -230,7 +230,7 @@ server.listen(3000);
 
       const discoveryCalls = toolLogs.filter(
         (log) =>
-          log.toolRequest.name === 'ls' ||
+          log.toolRequest.name === 'list_directory' ||
           log.toolRequest.name === 'glob' ||
           log.toolRequest.name === 'read_file' ||
           log.toolRequest.name === 'read_many_files',

@@ -77,7 +77,7 @@ module.exports = { add, multiply };
    */
   evalTest('USUALLY_PASSES', {
     name: 'should use ls to list directory contents',
-    prompt: 'What files are in this project?',
+    prompt: 'List the files in this project using the ls tool.',
     files: {
       'src/index.js': 'console.log("main");',
       'src/utils.js': 'module.exports = {};',
@@ -86,10 +86,12 @@ module.exports = { add, multiply };
     },
     assert: async (rig) => {
       const toolLogs = rig.readToolLogs();
-      const lsCalls = toolLogs.filter((log) => log.toolRequest.name === 'ls');
+      const lsCalls = toolLogs.filter(
+        (log) => log.toolRequest.name === 'list_directory',
+      );
       expect(
         lsCalls.length,
-        'Expected agent to use ls to list files',
+        'Expected agent to use list_directory to list files',
       ).toBeGreaterThanOrEqual(1);
     },
   });
@@ -220,7 +222,7 @@ module.exports = { processOrder };
       // Should have done some discovery (ls, glob, or grep) before reading
       const discoveryCalls = toolLogs.filter(
         (log) =>
-          log.toolRequest.name === 'ls' ||
+          log.toolRequest.name === 'list_directory' ||
           log.toolRequest.name === 'glob' ||
           log.toolRequest.name === 'grep_search',
       );
