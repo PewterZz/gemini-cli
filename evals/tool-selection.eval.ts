@@ -1,0 +1,197 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { describe, expect } from 'vitest';
+import { evalTest } from './test-helper.js';
+
+describe('Tool Selection', () => {
+  /**
+   * When searching for a string in code, the agent should use grep_search
+   * rather than reading every file.
+   */
+  evalTest('USUALLY_PASSES', {
+    name: 'should use grep over reading all files for string search',
+    prompt: 'Find all TODO comments in this project.',
+    files: {
+      'src/app.js': '// TODO: add error handling\nconsole.log("hello");',
+      'src/utils.js': 'function helper() { /* TODO: optimize */ return true; }',
+      'src/routes.js':
+        'const router = require("express").Router(); // TODO: add auth',
+      'src/db.js': 'const pool = require("pg").Pool(); // Ready',
+      'test/app.test.js': 'test("works", () => { expect(true).toBe(true); });',
+    },
+    assert: async (rig) => {
+      const toolLogs = rig.readToolLogs();
+      const grepCalls = toolLogs.filter(
+        (log) => log.toolRequest.name === 'grep_search',
+      );
+      expect(
+        grepCalls.length,
+        'Expected agent to use grep_search for finding TODOs',
+      ).toBeGreaterThanOrEqual(1);
+    },
+  });
+
+  /**
+   * When asked to count lines in files, the agent should use shell
+   * commands (wc -l) rather than reading files.
+   */
+  evalTest('USUALLY_PASSES', {
+    name: 'should use shell for counting operations',
+    prompt: 'How many lines of code are in the src directory?',
+    files: {
+      'src/app.js': Array.from({ length: 50 }, (_, i) => `// Line ${i}`).join(
+        '\n',
+      ),
+      'src/utils.js': Array.from({ length: 30 }, (_, i) => `// Util ${i}`).join(
+        '\n',
+      ),
+    },
+    assert: async (rig) => {
+      const toolLogs = rig.readToolLogs();
+      const shellCalls = toolLogs.filter(
+        (log) => log.toolRequest.name === 'run_shell_command',
+      );
+      // Agent should use shell (wc, find, cloc) rather than reading every file
+      expect(shellCalls.length).toBeGreaterThanOrEqual(1);
+    },
+  });
+
+  /**
+   * When asked to check if a port is in use, the agent should use shell
+   * commands, not try to read config files.
+   */
+  evalTest('USUALLY_PASSES', {
+    name: 'should use shell commands for system queries',
+    prompt: 'Check if port 3000 is currently in use.',
+    files: {
+      'app.js': 'const port = 3000;',
+    },
+    assert: async (rig) => {
+      const toolLogs = rig.readToolLogs();
+      const shellCalls = toolLogs.filter(
+        (log) => log.toolRequest.name === 'run_shell_command',
+      );
+      expect(
+        shellCalls.length,
+        'Expected agent to use shell for system queries',
+      ).toBeGreaterThanOrEqual(1);
+
+      const hasPortCheck = shellCalls.some((call) => {
+        let args = call.toolRequest.args;
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            /* */
+          }
+        }
+        const cmd = typeof args === 'string' ? args : args?.command || '';
+        return (
+          cmd.includes('lsof') ||
+          cmd.includes('netstat') ||
+          cmd.includes('ss ') ||
+          cmd.includes('3000')
+        );
+      });
+      expect(hasPortCheck, 'Expected port checking command').toBe(true);
+    },
+  });
+
+  /**
+   * When asked to check git history, the agent should use git log, not
+   * try to read .git directory.
+   */
+  evalTest('USUALLY_PASSES', {
+    name: 'should use git log for history queries',
+    prompt: 'Show me the last 5 commits in this repo.',
+    files: {
+      '.git/HEAD': 'ref: refs/heads/main',
+      '.git/config': '[core]\n\trepositoryformatversion = 0',
+      'app.js': 'console.log("hello");',
+    },
+    assert: async (rig) => {
+      const toolLogs = rig.readToolLogs();
+      const shellCalls = toolLogs.filter(
+        (log) => log.toolRequest.name === 'run_shell_command',
+      );
+
+      const gitLogCall = shellCalls.find((call) => {
+        let args = call.toolRequest.args;
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            /* */
+          }
+        }
+        const cmd = typeof args === 'string' ? args : args?.command || '';
+        return cmd.includes('git log');
+      });
+      expect(gitLogCall, 'Expected agent to use git log').toBeDefined();
+    },
+  });
+
+  /**
+   * For simple string replacements across files, the agent should use
+   * sed or grep+replace rather than reading each file individually.
+   */
+  evalTest('USUALLY_PASSES', {
+    name: 'should choose efficient tools for bulk operations',
+    prompt:
+      'Replace all console.log calls with logger.info across all files in src/.',
+    files: {
+      'src/app.js': 'console.log("starting");\nconsole.log("ready");',
+      'src/server.js': 'console.log("listening on port 3000");',
+      'src/utils.js': 'console.log("util loaded");',
+      'src/logger.js': 'module.exports = { info: console.info };',
+    },
+    assert: async (rig) => {
+      const toolLogs = rig.readToolLogs();
+
+      // Verify the replacement happened
+      const app = rig.readFile('src/app.js');
+      const server = rig.readFile('src/server.js');
+      const utils = rig.readFile('src/utils.js');
+
+      // At least some files should be updated
+      const updated = [app, server, utils].filter(
+        (content) =>
+          content.includes('logger') && !content.includes('console.log'),
+      );
+      expect(
+        updated.length,
+        'Expected at least some files to be updated',
+      ).toBeGreaterThanOrEqual(2);
+    },
+  });
+
+  /**
+   * When asked a yes/no question about code, the agent should read the
+   * relevant file and answer without making changes.
+   */
+  evalTest('USUALLY_PASSES', {
+    name: 'should answer questions without making changes',
+    prompt: 'Does this project use TypeScript?',
+    files: {
+      'package.json':
+        '{"name": "js-app", "dependencies": {"express": "^4.18.0"}}',
+      'src/app.js': 'console.log("hello");',
+    },
+    assert: async (rig) => {
+      const toolLogs = rig.readToolLogs();
+      const editCalls = toolLogs.filter(
+        (log) =>
+          log.toolRequest.name === 'write_file' ||
+          log.toolRequest.name === 'replace',
+      );
+      expect(
+        editCalls.length,
+        'Should not make edits when answering a question',
+      ).toBe(0);
+    },
+  });
+});
