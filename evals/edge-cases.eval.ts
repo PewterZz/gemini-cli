@@ -19,8 +19,13 @@ describe('Edge Cases', () => {
       'package.json': '{"name": "empty-app"}',
     },
     assert: async (rig) => {
-      // Should not crash, should produce some output
-      expect(result.length).toBeGreaterThan(0);
+      // Should not crash -- verify by checking that at least one tool
+      // call was made (agent attempted to read the empty file)
+      const toolLogs = rig.readToolLogs();
+      expect(
+        toolLogs.length,
+        'Agent should have made at least one tool call even for empty files',
+      ).toBeGreaterThan(0);
     },
   });
 
@@ -101,13 +106,18 @@ module.exports = { add, broken };
     },
     assert: async (rig) => {
       const toolLogs = rig.readToolLogs();
-      // Should use ls or glob to list files
-      const discoveryCalls = toolLogs.filter(
+      // The real assertion: agent should NOT have attempted to read
+      // assets/logo.png as a text file
+      const pngReadCalls = toolLogs.filter(
         (log) =>
-          log.toolRequest.name === 'list_directory' ||
-          log.toolRequest.name === 'glob',
+          (log.toolRequest.name === 'read_file' ||
+            log.toolRequest.name === 'read_many_files') &&
+          JSON.stringify(log.toolRequest.input).includes('logo.png'),
       );
-      expect(discoveryCalls.length).toBeGreaterThanOrEqual(1);
+      expect(
+        pngReadCalls.length,
+        'Agent should not attempt to read binary PNG file as text',
+      ).toBe(0);
     },
   });
 
