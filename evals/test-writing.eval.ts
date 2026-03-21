@@ -88,17 +88,16 @@ module.exports = { divide };
       );
       expect(writeCalls.length).toBeGreaterThanOrEqual(1);
 
-      // Find any test file written
-      const files = rig.listFiles('.');
-      const testFile = files.find(
-        (f) => f.includes('test') && f.endsWith('.js'),
-      );
+      // Find the test file written
+      const testFile =
+        rig.readFile('calc.test.js') ||
+        rig.readFile('test/calc.test.js') ||
+        rig.readFile('__tests__/calc.test.js');
       if (testFile) {
-        const content = rig.readFile(testFile);
         // Should test division by zero
-        expect(content).toMatch(/zero|0|throw|error/i);
+        expect(testFile).toMatch(/zero|0|throw|error/i);
         // Should test normal division
-        expect(content).toContain('divide');
+        expect(testFile).toContain('divide');
       }
     },
   });

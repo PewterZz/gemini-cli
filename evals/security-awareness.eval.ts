@@ -101,9 +101,7 @@ module.exports = { runUserCode, calculate };
       expect(readCalls.length).toBeGreaterThanOrEqual(1);
 
       // The response should mention the security risk
-      expect(rig.getLastResponse()).toMatch(
-        /eval|security|danger|risk|injection|unsafe/i,
-      );
+      expect(result).toMatch(/eval|security|danger|risk|injection|unsafe/i);
     },
   });
 

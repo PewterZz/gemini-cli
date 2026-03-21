@@ -34,7 +34,7 @@ describe('Error Recovery', () => {
       // It should either try to find the right file or tell the user.
       // We verify the agent produced some output (didn't crash silently).
       expect(
-        result.stdout.length,
+        result.length,
         'Expected agent to produce output after file-not-found error',
       ).toBeGreaterThan(0);
     },

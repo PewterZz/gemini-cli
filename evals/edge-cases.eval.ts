@@ -19,8 +19,8 @@ describe('Edge Cases', () => {
       'package.json': '{"name": "empty-app"}',
     },
     assert: async (rig) => {
-      // Should not crash, should produce output
-      expect(rig.getLastResponse().length).toBeGreaterThan(0);
+      // Should not crash, should produce some output
+      expect(result.length).toBeGreaterThan(0);
     },
   });
 
