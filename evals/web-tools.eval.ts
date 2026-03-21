@@ -14,18 +14,19 @@ describe('Web Tools', () => {
    */
   evalTest('USUALLY_PASSES', {
     name: 'should use web_search for current information queries',
-    prompt: 'What is the latest stable version of Node.js?',
+    prompt:
+      'What are the top tech news stories happening right now today? Search the web to find out.',
     files: {
       'app.js': 'console.log("hello world");',
     },
     assert: async (rig) => {
       const toolLogs = rig.readToolLogs();
       const searchCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'web_search',
+        (log) => log.toolRequest.name === 'google_web_search',
       );
       expect(
         searchCalls.length,
-        'Expected agent to call web_search for current information',
+        'Expected agent to call google_web_search for current information',
       ).toBeGreaterThanOrEqual(1);
     },
   });
@@ -72,7 +73,7 @@ module.exports = { greeting };
       const toolLogs = rig.readToolLogs();
       const webCalls = toolLogs.filter(
         (log) =>
-          log.toolRequest.name === 'web_search' ||
+          log.toolRequest.name === 'google_web_search' ||
           log.toolRequest.name === 'web_fetch',
       );
       expect(

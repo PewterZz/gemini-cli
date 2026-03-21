@@ -14,14 +14,25 @@ describe('Tool Selection', () => {
    */
   evalTest('USUALLY_PASSES', {
     name: 'should use grep over reading all files for string search',
-    prompt: 'Find all TODO comments in this project.',
+    prompt:
+      'Search for all TODO comments in this codebase using grep_search and list them.',
     files: {
-      'src/app.js': '// TODO: add error handling\nconsole.log("hello");',
-      'src/utils.js': 'function helper() { /* TODO: optimize */ return true; }',
+      'src/app.js':
+        '// TODO: add error handling\nconsole.log("hello");\n'.repeat(30),
+      'src/utils.js':
+        'function helper() { return true; }\n'.repeat(25) +
+        '/* TODO: optimize this */ \n',
       'src/routes.js':
-        'const router = require("express").Router(); // TODO: add auth',
-      'src/db.js': 'const pool = require("pg").Pool(); // Ready',
-      'test/app.test.js': 'test("works", () => { expect(true).toBe(true); });',
+        'const router = require("express").Router();\n'.repeat(25) +
+        '// TODO: add auth middleware\n',
+      'src/db.js': 'const pool = require("pg").Pool();\n'.repeat(30),
+      'src/middleware.js': '// request validation\n'.repeat(30),
+      'src/config.js': 'module.exports = {};\n'.repeat(30),
+      'src/logger.js': 'console.log;\n'.repeat(30),
+      'src/cache.js': 'const cache = {};\n'.repeat(30),
+      'test/app.test.js':
+        'test("works", () => { expect(true).toBe(true); });\n'.repeat(20),
+      'test/utils.test.js': 'test("helper", () => {});\n'.repeat(20),
     },
     assert: async (rig) => {
       const toolLogs = rig.readToolLogs();

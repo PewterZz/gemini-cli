@@ -32,7 +32,7 @@ const TOOL_NAMES = [
   'run_shell_command',
   'save_memory',
   'web_fetch',
-  'web_search',
+  'google_web_search',
   'write_file',
   'write_todos',
 ];
@@ -82,7 +82,7 @@ function scanEvalFiles() {
       toolsReferenced.add('save_memory');
     }
     if (content.includes('WEB_SEARCH_TOOL_NAME')) {
-      toolsReferenced.add('web_search');
+      toolsReferenced.add('google_web_search');
     }
     if (content.includes('WEB_FETCH_TOOL_NAME')) {
       toolsReferenced.add('web_fetch');
