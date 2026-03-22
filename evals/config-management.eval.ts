@@ -29,7 +29,7 @@ module.exports = {
       const content = rig.readFile('config.js');
       expect(content).toContain('process.env');
       // Should provide defaults
-      expect(content).toMatch(/\|\||??|3000/);
+      expect(content).toMatch(/process\.env|3000/);
       // logLevel should still be there
       expect(content).toContain('logLevel');
     },

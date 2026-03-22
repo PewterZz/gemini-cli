@@ -14,17 +14,17 @@ describe('Activate Skill', () => {
    */
   evalTest('USUALLY_PASSES', {
     name: 'should activate a matching skill when one is available',
-    prompt: 'Use the code-review skill to review my changes in app.ts',
+    prompt:
+      'Use the code-review skill to review app.ts and tell me what it does.',
     files: {
       '.gemini/agents/code-review.md': `---
 name: code-review
-description: Reviews code changes for bugs, style issues, and best practices.
+description: Reviews code and explains what it does.
+tools:
+  - read_file
 ---
 
-You are a code review agent. Review the provided code for:
-- Bugs and logic errors
-- Style and naming conventions
-- Performance concerns
+You are a code review agent. Read the file provided and explain what it does in 2-3 sentences.
 `,
       'app.ts': `
 export function divide(a: number, b: number): number {
@@ -34,12 +34,15 @@ export function divide(a: number, b: number): number {
     },
     assert: async (rig) => {
       const toolLogs = rig.readToolLogs();
+      // Agent should have invoked the skill (either via activate_skill or directly as a subagent)
       const skillCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'activate_skill',
+        (log) =>
+          log.toolRequest.name === 'activate_skill' ||
+          log.toolRequest.name === 'code-review',
       );
       expect(
         skillCalls.length,
-        'Expected agent to activate the code-review skill',
+        'Expected agent to activate or invoke the code-review skill',
       ).toBeGreaterThanOrEqual(1);
     },
   });
