@@ -140,6 +140,17 @@ export async function fetchUser(id: number, includeDeleted: boolean) {
 `,
     },
     assert: async (rig, result) => {
+      const toolLogs = rig.readToolLogs();
+
+      // Must have read the file
+      const readCalls = toolLogs.filter(
+        (log) => log.toolRequest.name === 'read_file',
+      );
+      expect(
+        readCalls.length,
+        'Expected agent to read the file before reviewing',
+      ).toBeGreaterThanOrEqual(1);
+
       // Response should identify this as a breaking change
       expect(result).toMatch(/break|backward|compat|caller|requir|existing/i);
     },

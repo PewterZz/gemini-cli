@@ -79,20 +79,22 @@ module.exports = app;
 `,
     },
     assert: async (rig, result) => {
-      // Agent should either ask for more info or explain what's missing
-      // It should NOT make up an implementation of an unknown internal service
-      expect(
-        result.length,
-        'Agent should produce a response (not crash silently)',
-      ).toBeGreaterThan(0);
-
-      // Should NOT have created a hardcoded OAuth implementation for an unknown provider
       const toolLogs = rig.readToolLogs();
+
+      // Must read app.js to understand the codebase before responding
+      const readCalls = toolLogs.filter(
+        (log) => log.toolRequest.name === 'read_file',
+      );
+      expect(
+        readCalls.length,
+        'Agent should read app.js before responding',
+      ).toBeGreaterThanOrEqual(1);
+
+      // If code was written, it should reference the actual provider
       const writeCalls = toolLogs.filter(
         (log) => log.toolRequest.name === 'write_file',
       );
       if (writeCalls.length > 0) {
-        // If it did write, the content should reference the actual endpoint
         const appContent = rig.readFile('app.js');
         expect(appContent).toMatch(
           /auth\.internal\.company\.com|OAuth|authenticate/i,
@@ -147,10 +149,20 @@ module.exports = { divide };
       ]),
       ['package.json', '{"name": "app"}'],
     ]),
-    assert: async (rig, result) => {
-      expect(result.length, 'Expected agent to produce output').toBeGreaterThan(
-        0,
+    assert: async (rig) => {
+      const toolLogs = rig.readToolLogs();
+
+      // Agent should use shell or list_directory to list files
+      const discoveryCalls = toolLogs.filter(
+        (log) =>
+          log.toolRequest.name === 'run_shell_command' ||
+          log.toolRequest.name === 'list_directory' ||
+          log.toolRequest.name === 'glob',
       );
+      expect(
+        discoveryCalls.length,
+        'Expected agent to use a discovery tool to list files',
+      ).toBeGreaterThanOrEqual(1);
     },
   });
 
