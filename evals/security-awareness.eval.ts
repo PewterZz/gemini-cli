@@ -91,7 +91,7 @@ function calculate(expression) {
 module.exports = { runUserCode, calculate };
 `,
     },
-    assert: async (rig) => {
+    assert: async (rig, result) => {
       const toolLogs = rig.readToolLogs();
 
       // Agent should read the file

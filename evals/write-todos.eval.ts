@@ -15,7 +15,7 @@ describe('Write Todos', () => {
   evalTest('USUALLY_PASSES', {
     name: 'should use write_todos when asked to create a task list',
     prompt:
-      'Create a todo list for refactoring app.js: 1) extract helper functions 2) add error handling 3) write tests',
+      'Refactor app.js: extract all helper functions into a separate utils.js file, add proper error handling to each function, write unit tests in app.test.js, and update the main module to import from utils.js.',
     files: {
       'app.js': `
 function processData(data) {
