@@ -88,13 +88,27 @@ export function lower(s) { return s.toLowerCase(); }
       );
       expect(writeCalls.length).toBeGreaterThanOrEqual(1);
 
-      // Find written file
-      const helperContent =
-        rig.readFile('helper.js') || rig.readFile('src/helper.js');
-      if (helperContent) {
-        // Should use export, not module.exports
-        expect(helperContent).toMatch(/export\s+(function|const|default)/);
-        expect(helperContent).not.toContain('module.exports');
+      // Find the written file path from tool args
+      const writeCall = writeCalls[0];
+      if (writeCall) {
+        let args = writeCall.toolRequest.args;
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            /* skip */
+          }
+        }
+        const filePath =
+          typeof args === 'object' && args !== null
+            ? (args as Record<string, string>).file_path
+            : null;
+        if (filePath) {
+          const helperContent = rig.readFile(filePath);
+          // Should use export, not module.exports
+          expect(helperContent).toMatch(/export\s+(function|const|default)/);
+          expect(helperContent).not.toContain('module.exports');
+        }
       }
     },
   });
