@@ -44,30 +44,89 @@ module.exports = { processUsers, users };
   });
 
   /**
-   * When asked to fix a logic bug, the agent should fix the specific issue
-   * without rewriting unrelated code.
+   * When tests fail due to a bug in a dependency module, the agent should
+   * trace the error to the correct file and fix the root cause, not the
+   * calling code.
+   *
+   * This tests cross-module debugging: the failing test is in calculator.ts,
+   * the bug is in math.ts. The agent must trace the failure back to the root.
    */
   evalTest('USUALLY_PASSES', {
-    name: 'should fix an off-by-one error',
-    prompt: 'The pagination in list.js skips the first item. Fix it.',
+    name: 'should trace a test failure to the correct dependency module',
+    timeout: 600000,
     files: {
-      'list.js': `
-function paginate(items, page, perPage) {
-  const start = page * perPage;
-  const end = start + perPage;
-  return items.slice(start, end);
+      'src/math.ts': `
+export function add(a: number, b: number): number {
+  return a - b; // BUG: should be addition
 }
-
-// Page 1 should show items 0-9, but it shows items 10-19
-module.exports = { paginate };
 `,
+      'src/calculator.ts': `
+import { add } from './math.js';
+
+export function calculateTotal(a: number, b: number): number {
+  return add(a, b);
+}
+`,
+      'src/calculator.test.ts': `
+import { expect, test } from 'vitest';
+import { calculateTotal } from './calculator.js';
+
+test('correctly adds two numbers', () => {
+  expect(calculateTotal(2, 3)).toBe(5);
+});
+`,
+      'package.json': JSON.stringify({
+        name: 'test-project',
+        type: 'module',
+        scripts: { test: 'vitest run' },
+        devDependencies: { vitest: '^2.0.0' },
+      }),
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: {
+          target: 'ESNext',
+          module: 'ESNext',
+          moduleResolution: 'node',
+          strict: true,
+          skipLibCheck: true,
+        },
+      }),
     },
+    prompt:
+      'The tests in this project are failing. Diagnose the issue, fix the bug, and ensure all tests pass.',
     assert: async (rig) => {
-      const content = rig.readFile('list.js');
-      // The fix should adjust the start calculation
-      // Common fix: (page - 1) * perPage
-      expect(content).toMatch(/page\s*-\s*1|page\s*<|start\s*=\s*\(/);
-      expect(content).toContain('paginate');
+      const toolLogs = rig.readToolLogs();
+
+      // Agent must have run the tests to observe the failure
+      const shellCalls = toolLogs.filter(
+        (log) => log.toolRequest.name === 'run_shell_command',
+      );
+      const ranTests = shellCalls.some((log) => {
+        let args = log.toolRequest.args;
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            /* */
+          }
+        }
+        const cmd =
+          typeof args === 'string'
+            ? args
+            : ((args as Record<string, string>).command ?? '');
+        return (
+          cmd.includes('vitest') ||
+          cmd.includes('npm test') ||
+          cmd.includes('npm run test')
+        );
+      });
+      expect(ranTests, 'Expected agent to run the test suite').toBe(true);
+
+      // The fix must be in math.ts (the root cause), not calculator.ts
+      const mathContent = rig.readFile('src/math.ts');
+      expect(
+        mathContent,
+        'Expected math.ts to use addition (a + b), not subtraction',
+      ).toContain('a + b');
     },
   });
 
