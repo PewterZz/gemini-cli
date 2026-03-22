@@ -44,12 +44,27 @@ module.exports = { add, subtract, multiply };
         'Expected agent to create a test file',
       ).toBeGreaterThanOrEqual(1);
 
-      // Find the test file
-      const testFile =
-        rig.readFile('math.test.js') ||
-        rig.readFile('test/math.test.js') ||
-        rig.readFile('__tests__/math.test.js');
-      expect(testFile).toBeDefined();
+      // Extract the written file path from tool args
+      const writeCall = writeCalls[0];
+      let testFile: string | null = null;
+      if (writeCall) {
+        let args = writeCall.toolRequest.args;
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            /* */
+          }
+        }
+        const filePath =
+          typeof args === 'object' && args !== null
+            ? (args as Record<string, string>).file_path
+            : null;
+        if (filePath) {
+          testFile = rig.readFile(filePath);
+        }
+      }
+      expect(testFile, 'Expected agent to create a test file').toBeTruthy();
 
       // Test file should import from math.js
       expect(testFile).toContain('math');
@@ -88,16 +103,28 @@ module.exports = { divide };
       );
       expect(writeCalls.length).toBeGreaterThanOrEqual(1);
 
-      // Find the test file written
-      const testFile =
-        rig.readFile('calc.test.js') ||
-        rig.readFile('test/calc.test.js') ||
-        rig.readFile('__tests__/calc.test.js');
-      if (testFile) {
-        // Should test division by zero
-        expect(testFile).toMatch(/zero|0|throw|error/i);
-        // Should test normal division
-        expect(testFile).toContain('divide');
+      // Extract the written file path from tool args
+      const writeCall = writeCalls[0];
+      if (writeCall) {
+        let args = writeCall.toolRequest.args;
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            /* */
+          }
+        }
+        const filePath =
+          typeof args === 'object' && args !== null
+            ? (args as Record<string, string>).file_path
+            : null;
+        if (filePath) {
+          const testFile = rig.readFile(filePath);
+          // Should test division by zero
+          expect(testFile).toMatch(/zero|0|throw|error/i);
+          // Should test normal division
+          expect(testFile).toContain('divide');
+        }
       }
     },
   });
