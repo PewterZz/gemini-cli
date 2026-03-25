@@ -48,7 +48,10 @@ describe('Environment Awareness', () => {
         return (
           cmd.includes('npm test') ||
           cmd.includes('npm run test') ||
-          cmd.includes('jest')
+          cmd.includes('npx jest') ||
+          cmd.includes('yarn test') ||
+          cmd.includes('jest') ||
+          cmd.includes('jest --coverage')
         );
       });
       expect(
