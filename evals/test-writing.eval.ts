@@ -5,7 +5,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 
 describe('Test Writing', () => {
   /**
@@ -58,10 +58,10 @@ module.exports = { add, subtract, multiply };
         }
         const filePath =
           typeof args === 'object' && args !== null
-            ? (args as Record<string, string>).file_path
+            ? (args as Record<string, string>)['file_path']
             : null;
         if (filePath) {
-          testFile = rig.readFile(filePath);
+          testFile = readFileOrFail(rig, filePath);
         }
       }
       expect(testFile, 'Expected agent to create a test file').toBeTruthy();
@@ -116,10 +116,10 @@ module.exports = { divide };
         }
         const filePath =
           typeof args === 'object' && args !== null
-            ? (args as Record<string, string>).file_path
+            ? (args as Record<string, string>)['file_path']
             : null;
         if (filePath) {
-          const testFile = rig.readFile(filePath);
+          const testFile = readFileOrFail(rig, filePath);
           // Should test division by zero
           expect(testFile).toMatch(/zero|0|throw|error/i);
           // Should test normal division
@@ -150,7 +150,7 @@ module.exports = { capitalize };
     },
     assert: async (rig) => {
       // The function should be fixed
-      const source = rig.readFile('strings.js');
+      const source = readFileOrFail(rig, 'strings.js');
       expect(source).toContain('capitalize');
 
       // A test should exist

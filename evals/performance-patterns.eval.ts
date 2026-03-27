@@ -5,7 +5,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 
 describe('Performance Patterns', () => {
   /**
@@ -33,7 +33,7 @@ module.exports = { findDuplicates };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('search.js');
+      const content = readFileOrFail(rig, 'search.js');
       // Should use a Set or Map for O(n) solution
       expect(content).toMatch(/Set|Map|has\(|new Set/);
       expect(content).toContain('findDuplicates');
@@ -58,7 +58,7 @@ module.exports = { fibonacci };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('math.js');
+      const content = readFileOrFail(rig, 'math.js');
       expect(content).toContain('fibonacci');
       // Should have some form of caching
       expect(content).toMatch(/cache|memo|Map|Object\.create|{}/);
@@ -86,7 +86,7 @@ module.exports = { getUsersWithPosts };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('users.js');
+      const content = readFileOrFail(rig, 'users.js');
       // Should use a JOIN or batch query instead of loop
       expect(content).toMatch(/JOIN|IN\s*\(|Promise\.all/i);
       expect(content).toContain('getUsersWithPosts');
@@ -122,7 +122,7 @@ module.exports = { parseCSV };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('csv-parser.js');
+      const content = readFileOrFail(rig, 'csv-parser.js');
       // Should use streaming or chunked reading
       expect(content).toMatch(/createReadStream|readline|stream|pipe|chunk/i);
       expect(content).toContain('parseCSV');

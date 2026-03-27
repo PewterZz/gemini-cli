@@ -5,7 +5,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 import { EDIT_TOOL_NAMES } from '@google/gemini-cli-core';
 
 describe('Error Recovery', () => {
@@ -99,7 +99,7 @@ console.log(result);
         const cmd =
           typeof args === 'string'
             ? args
-            : ((args as Record<string, string>).command ?? '');
+            : ((args as Record<string, string>)['command'] ?? '');
         return (
           cmd.includes('tsc') ||
           cmd.includes('npm run build') ||
@@ -112,7 +112,7 @@ console.log(result);
       ).toBe(true);
 
       // The string-argument call should be gone
-      const appContent = rig.readFile('src/app.ts');
+      const appContent = readFileOrFail(rig, 'src/app.ts');
       expect(
         appContent,
         'Expected src/app.ts to no longer pass string literals to add()',
@@ -183,7 +183,7 @@ test('filters items strictly above threshold', () => {
         const cmd =
           typeof args === 'string'
             ? args
-            : ((args as Record<string, string>).command ?? '');
+            : ((args as Record<string, string>)['command'] ?? '');
         return (
           cmd.includes('vitest') ||
           cmd.includes('npm test') ||
@@ -202,14 +202,14 @@ test('filters items strictly above threshold', () => {
       ).toBeGreaterThanOrEqual(1);
 
       // The bug in utils.ts must be fixed (>= changed to >)
-      const utilsContent = rig.readFile('src/utils.ts');
+      const utilsContent = readFileOrFail(rig, 'src/utils.ts');
       expect(
         utilsContent,
         'Expected utils.ts to use > instead of >= for the threshold comparison',
       ).toMatch(/item\s*>\s*threshold/);
 
       // The test file must be unchanged (agent should not cheat by lowering the bar)
-      const testContent = rig.readFile('src/utils.test.ts');
+      const testContent = readFileOrFail(rig, 'src/utils.test.ts');
       expect(
         testContent,
         'Expected test file to be unchanged — fix should be in source, not tests',

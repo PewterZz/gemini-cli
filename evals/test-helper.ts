@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { it } from 'vitest';
+import { expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -172,6 +172,22 @@ export function runEval(
     it.skip(name, fn);
   } else {
     it(name, fn, timeout);
+  }
+}
+
+export function readFileOrFail(
+  rig: Pick<TestRig, 'readFile'>,
+  filePath: string,
+): string {
+  try {
+    return rig.readFile(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      expect.fail(
+        `Expected file "${filePath}" to exist, but it was missing (ENOENT).`,
+      );
+    }
+    throw error;
   }
 }
 

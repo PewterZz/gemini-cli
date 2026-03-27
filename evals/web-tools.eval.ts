@@ -39,7 +39,6 @@ const getEditCalls = (logs: ToolLog[]) =>
 describe('Web Tools', () => {
   evalTest('USUALLY_PASSES', {
     name: 'fetch network failure handling should combine web spec with local inspection',
-    timeout: 150000,
     prompt:
       'Check whether our error handling matches the fetch API spec for network failures.',
     files: {
@@ -81,7 +80,6 @@ export async function loadOrders(baseUrl: string) {
 
   evalTest('USUALLY_PASSES', {
     name: 'deprecated crypto api check should use web and local search',
-    timeout: 180000,
     prompt:
       'We are using an old crypto API. Find out if it is deprecated and what we should migrate to.',
     files: {
@@ -122,7 +120,6 @@ export function hashToken(token: string) {
 
   evalTest('USUALLY_PASSES', {
     name: 'readme and nvmrc consistency check should surface version mismatch',
-    timeout: 120000,
     prompt:
       'The README says to use npm install but the project has a .nvmrc. Are these instructions up to date?',
     files: {
@@ -157,7 +154,6 @@ export function hashToken(token: string) {
 
   evalTest('USUALLY_PASSES', {
     name: 'lodash vulnerability triage should consult external advisories',
-    timeout: 150000,
     prompt:
       'Is our lodash version affected by any known security vulnerabilities?',
     files: {

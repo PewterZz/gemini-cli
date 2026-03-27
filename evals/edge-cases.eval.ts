@@ -5,7 +5,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 
 describe('Edge Cases', () => {
   /**
@@ -82,7 +82,7 @@ module.exports = { add, broken };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('broken.js');
+      const content = readFileOrFail(rig, 'broken.js');
       // Should have fixed the syntax error
       // The add function should still work
       expect(content).toContain('add');
@@ -108,12 +108,25 @@ module.exports = { add, broken };
       const toolLogs = rig.readToolLogs();
       // The real assertion: agent should NOT have attempted to read
       // assets/logo.png as a text file
-      const pngReadCalls = toolLogs.filter(
-        (log) =>
-          (log.toolRequest.name === 'read_file' ||
-            log.toolRequest.name === 'read_many_files') &&
-          JSON.stringify(log.toolRequest.input).includes('logo.png'),
-      );
+      const pngReadCalls = toolLogs.filter((log) => {
+        if (
+          log.toolRequest.name !== 'read_file' &&
+          log.toolRequest.name !== 'read_many_files'
+        ) {
+          return false;
+        }
+
+        let args = log.toolRequest.args;
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            return args.includes('logo.png');
+          }
+        }
+
+        return JSON.stringify(args).includes('logo.png');
+      });
       expect(
         pngReadCalls.length,
         'Agent should not attempt to read binary PNG file as text',
@@ -213,7 +226,7 @@ module.exports = { greet, divide };
 }`,
     },
     assert: async (rig) => {
-      const content = rig.readFile('package.json');
+      const content = readFileOrFail(rig, 'package.json');
       // Should be valid JSON
       let parsed;
       try {
@@ -248,7 +261,7 @@ module.exports = { clamp };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('src/lib/utils/helpers.js');
+      const content = readFileOrFail(rig, 'src/lib/utils/helpers.js');
       // Should have the original function plus a new one
       expect(content).toContain('clamp');
       // Should have added something new

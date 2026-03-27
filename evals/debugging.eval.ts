@@ -7,7 +7,7 @@
 import { describe, expect } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 import {
   READ_FILE_TOOL_NAME,
   READ_MANY_FILES_TOOL_NAME,
@@ -68,13 +68,12 @@ const readFileWithGuard = (
     existsSync(join(rig.testDir ?? '', filePath)),
     `${context}: expected ${filePath} to exist, but it was missing (possibly renamed or moved).`,
   ).toBe(true);
-  return rig.readFile(filePath);
+  return readFileOrFail(rig, filePath);
 };
 
 describe('Debugging', () => {
   evalTest('USUALLY_PASSES', {
     name: 'stack trace misdirection should be fixed in caller not utility',
-    timeout: 150000,
     prompt:
       'App throws TypeError: Cannot read properties of undefined (reading map) at utils.ts:12. Fix it.',
     files: {
@@ -138,7 +137,6 @@ export function getUsersHandler(req: { query: Record<string, string | undefined>
 
   evalTest('USUALLY_PASSES', {
     name: 'stale profile data bug should be fixed by correct await ordering',
-    timeout: 150000,
     prompt:
       'The user profile sometimes shows stale data even after updates. Fix it.',
     files: {
@@ -197,7 +195,6 @@ export async function updateAndGetProfile(
 
   evalTest('USUALLY_PASSES', {
     name: 'ci-only config path failure should be traced to environment-specific loader',
-    timeout: 150000,
     prompt:
       'Tests fail on CI with: Error: ENOENT: no such file or directory ./config/prod.json. All tests pass locally.',
     files: {

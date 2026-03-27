@@ -39,7 +39,6 @@ const getEditCalls = (logs: ToolLog[]): ToolLog[] =>
 describe('Tool Selection', () => {
   evalTest('USUALLY_PASSES', {
     name: 'ci failure with local pass should trigger env-pattern search',
-    timeout: 150000,
     prompt:
       'The CI pipeline is failing but all tests pass locally. Help me understand why.',
     files: {
@@ -106,7 +105,6 @@ export function getPaymentsEndpoint() {
 
   evalTest('USUALLY_PASSES', {
     name: 'memory leak investigation should trace route to cache bug',
-    timeout: 120000,
     prompt:
       'Something is causing memory leaks in production. The monitoring shows heap growing after requests to /api/users.',
     files: {
@@ -171,7 +169,6 @@ export function cacheSize() {
 
   evalTest('USUALLY_PASSES', {
     name: 'hardcoded db host discovery should use grep over broad reading',
-    timeout: 120000,
     prompt: 'Find all places where we hardcode the database host.',
     files: {
       'src/config/db.ts':
@@ -226,7 +223,6 @@ export function cacheSize() {
 
   evalTest('USUALLY_PASSES', {
     name: 'recently modified files should be answered using shell metadata',
-    timeout: 120000,
     prompt: 'Which files were modified most recently?',
     files: {
       'src/a.ts': 'export const a = 1;\n',

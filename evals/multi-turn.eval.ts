@@ -5,7 +5,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 import { EDIT_TOOL_NAMES } from '@google/gemini-cli-core';
 
 describe('Multi-Turn Context', () => {
@@ -38,7 +38,7 @@ export function add(a: number, b: number): number {
       ).toBeGreaterThanOrEqual(1);
 
       // Should have added subtract without removing add
-      const content = rig.readFile('math.ts');
+      const content = readFileOrFail(rig, 'math.ts');
       expect(content).toContain('subtract');
       expect(content).toContain('add');
     },
@@ -51,7 +51,7 @@ export function add(a: number, b: number): number {
   evalTest('USUALLY_PASSES', {
     name: 'should infer context from existing work when handling follow-up',
     prompt:
-      'Add the same kind of validation to the updateUser function as the createUser function has.',
+      'Add the same validation to updateUser as createUser has, and for invalid email throw exactly: E_USER_EMAIL_INVALID.',
     files: {
       'users.ts': `
 export function createUser(name: string, email: string) {
@@ -76,10 +76,16 @@ export function updateUser(id: number, name: string, email: string) {
       expect(readCalls.length).toBeGreaterThanOrEqual(1);
 
       // updateUser should now have validation
-      const content = rig.readFile('users.ts');
+      const content = readFileOrFail(rig, 'users.ts');
       expect(content).toMatch(/throw|Error|required|valid/i);
+      expect(content).toContain('E_USER_EMAIL_INVALID');
       // createUser should be unchanged
       expect(content).toContain('Name is required');
+
+      const followUpResult = await rig.run({
+        args: 'Follow-up: what exact invalid-email error code did you use in the previous step for updateUser? Reply in the form CODE=<value>.',
+      });
+      expect(followUpResult).toMatch(/CODE\s*=\s*E_USER_EMAIL_INVALID/);
     },
   });
 
@@ -108,7 +114,7 @@ export const port = parseInt(process.env.PORT ?? '');  // BUG: NaN when PORT not
       expect(editCalls.length).toBeGreaterThanOrEqual(1);
 
       // Should contain 3000 as a literal
-      const content = rig.readFile('config.ts');
+      const content = readFileOrFail(rig, 'config.ts');
       expect(content).toContain('3000');
     },
   });
@@ -142,7 +148,7 @@ export async function fetchUser(id: number) {
       );
       expect(editCalls.length).toBeGreaterThanOrEqual(1);
 
-      const content = rig.readFile('api.ts');
+      const content = readFileOrFail(rig, 'api.ts');
       // Should handle non-ok response (complete the first TODO)
       expect(content).toMatch(/ok|status|throw|Error/);
       // try/catch should still be there

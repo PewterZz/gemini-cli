@@ -5,7 +5,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 
 describe('Multi-File Editing', () => {
   /**
@@ -45,9 +45,9 @@ test('calculateTotal returns correct sum', () => {
     },
     assert: async (rig) => {
       // All three files should be updated
-      const pricing = rig.readFile('src/pricing.js');
-      const cart = rig.readFile('src/cart.js');
-      const test = rig.readFile('test/pricing.test.js');
+      const pricing = readFileOrFail(rig, 'src/pricing.js');
+      const cart = readFileOrFail(rig, 'src/cart.js');
+      const test = readFileOrFail(rig, 'test/pricing.test.js');
 
       expect(pricing).toContain('computeTotal');
       expect(pricing).not.toContain('calculateTotal');
@@ -86,11 +86,11 @@ module.exports = { parseCSV };
     },
     assert: async (rig) => {
       // New file should exist
-      const validator = rig.readFile('src/validator.js');
+      const validator = readFileOrFail(rig, 'src/validator.js');
       expect(validator).toContain('validateEmail');
 
       // Index should export it
-      const index = rig.readFile('src/index.js');
+      const index = readFileOrFail(rig, 'src/index.js');
       expect(index).toContain('validator');
       expect(index).toContain('validateEmail');
     },
@@ -128,7 +128,7 @@ module.exports = app;
         '{"name": "app", "dependencies": {"express": "^4.18.0", "cors": "^2.8.0", "lodash": "^4.17.0"}}',
     },
     assert: async (rig) => {
-      const content = rig.readFile('app.js');
+      const content = readFileOrFail(rig, 'app.js');
       // Lodash should be imported
       expect(content).toContain('lodash');
       // Existing imports should still be there
@@ -166,14 +166,14 @@ module.exports = { processRequest };
 `,
     },
     assert: async (rig) => {
-      const app = rig.readFile('app.js');
+      const app = readFileOrFail(rig, 'app.js');
       // validateInput should be imported, not defined inline
       expect(app).not.toMatch(/function validateInput/);
       expect(app).toContain('validateInput');
       expect(app).toContain('processRequest');
 
       // validation.js should exist with the function
-      const validation = rig.readFile('validation.js');
+      const validation = readFileOrFail(rig, 'validation.js');
       expect(validation).toContain('validateInput');
     },
   });

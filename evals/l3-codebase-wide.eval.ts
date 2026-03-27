@@ -13,7 +13,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 
 describe('L3 Codebase-Wide Context', () => {
   /**
@@ -79,7 +79,7 @@ export function handleRequest(timestamp: number) {
       ).toBeGreaterThanOrEqual(1);
 
       // formatDate should now accept number | Date
-      const dateContent = rig.readFile('src/utils/date.ts');
+      const dateContent = readFileOrFail(rig, 'src/utils/date.ts');
       expect(
         dateContent.includes('number') || dateContent.includes('timestamp'),
         'Expected formatDate to be updated to accept timestamps',
@@ -152,7 +152,7 @@ export async function getUser(id: number): Promise<UserRecord> {
       ).toBeGreaterThanOrEqual(1);
 
       // Fix should involve conversion (new Date or mapping)
-      const serviceContent = rig.readFile('src/services/user.ts');
+      const serviceContent = readFileOrFail(rig, 'src/services/user.ts');
       expect(
         serviceContent.includes('new Date') ||
           serviceContent.includes('createdAt') ||

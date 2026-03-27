@@ -5,7 +5,23 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
+
+const configTypoFixtureLines = Array.from({ length: 80 }, (_, index) => {
+  const lineNumber = index + 1;
+
+  if (lineNumber === 1) return "const http = require('http');";
+  if (lineNumber === 2) return "const APP_NAME = 'targeted-config-service';";
+  if (lineNumber === 39) return 'const PORT = process.env.PORT || 3000;';
+  if (lineNumber === 40)
+    return '// The server will recieve requests on the configured port';
+  if (lineNumber === 41) return "const HOST = process.env.HOST || 'localhost';";
+  if (lineNumber === 80) return 'module.exports = { PORT, HOST, APP_NAME };';
+
+  return `const settingLine${lineNumber} = 'line-${lineNumber}';`;
+});
+
+const configTypoFixture = `${configTypoFixtureLines.join('\n')}\n`;
 
 describe('Minimal Changes', () => {
   /**
@@ -40,7 +56,7 @@ module.exports = { paginate, getPageCount, validatePage };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('list.js');
+      const content = readFileOrFail(rig, 'list.js');
 
       // The bug should be fixed
       expect(content).toMatch(/page\s*-\s*1/);
@@ -80,7 +96,7 @@ module.exports = { add, subtract };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('math.js');
+      const content = readFileOrFail(rig, 'math.js');
 
       // New function added
       expect(content).toContain('multiply');
@@ -101,27 +117,28 @@ module.exports = { add, subtract };
   evalTest('USUALLY_PASSES', {
     name: 'should fix only the requested typo without touching code',
     prompt:
-      'Fix the typo in the comment on line 3 of config.js. "recieve" should be "receive".',
+      'Fix the typo in the comment on line 40 of config.js. "recieve" should be "receive".',
     files: {
-      'config.js': `const http = require('http');
-// Server configuration
-// The server will recieve requests on the following port
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || 'localhost';
-
-module.exports = { PORT, HOST };
-`,
+      'config.js': configTypoFixture,
     },
     assert: async (rig) => {
-      const content = rig.readFile('config.js');
+      const content = readFileOrFail(rig, 'config.js');
+      const finalLines = content.trimEnd().split('\n');
 
       // Typo fixed
       expect(content).toContain('receive');
       expect(content).not.toContain('recieve');
+      expect(finalLines[39]).toBe(
+        '// The server will receive requests on the configured port',
+      );
 
-      // Code logic unchanged
-      expect(content).toContain('PORT = process.env.PORT || 3000');
-      expect(content).toContain('HOST = process.env.HOST');
+      expect(finalLines.length).toBe(configTypoFixtureLines.length);
+      expect(finalLines.slice(0, 39)).toEqual(
+        configTypoFixtureLines.slice(0, 39),
+      );
+      expect(finalLines.slice(40, 80)).toEqual(
+        configTypoFixtureLines.slice(40, 80),
+      );
     },
   });
 
@@ -201,7 +218,7 @@ module.exports = { processOrder };
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('order.js');
+      const content = readFileOrFail(rig, 'order.js');
 
       // console.log should be added to processOrder
       expect(content).toContain('console.log');

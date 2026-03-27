@@ -5,7 +5,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 import { EDIT_TOOL_NAMES } from '@google/gemini-cli-core';
 
 describe('Code Understanding', () => {
@@ -149,7 +149,7 @@ module.exports = { add };
       ).toBeGreaterThanOrEqual(1);
 
       // Should have modified the file
-      const content = rig.readFile('math.js');
+      const content = readFileOrFail(rig, 'math.js');
       expect(content).toContain('subtract');
       // Should follow the same pattern (type checking)
       expect(content).toContain('TypeError');
@@ -201,7 +201,7 @@ server.listen(3000);
       ).toBe(0);
 
       // File should be unchanged
-      const content = rig.readFile('server.js');
+      const content = readFileOrFail(rig, 'server.js');
       expect(content).toContain('SELECT * FROM users');
     },
   });

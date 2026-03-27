@@ -5,7 +5,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 
 describe('Large Codebase Navigation', () => {
   /**
@@ -188,9 +188,9 @@ export function createInvoice(date: Date) {
       ).toBeGreaterThanOrEqual(1);
 
       // All three files should be updated
-      const utils = rig.readFile('src/utils.ts');
-      const report = rig.readFile('src/report.ts');
-      const invoice = rig.readFile('src/invoice.ts');
+      const utils = readFileOrFail(rig, 'src/utils.ts');
+      const report = readFileOrFail(rig, 'src/report.ts');
+      const invoice = readFileOrFail(rig, 'src/invoice.ts');
 
       expect(utils).toContain('formatDateTime');
       expect(report).toContain('formatDateTime');

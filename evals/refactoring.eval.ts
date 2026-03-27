@@ -7,7 +7,7 @@
 import { describe, expect } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 import {
   READ_FILE_TOOL_NAME,
   READ_MANY_FILES_TOOL_NAME,
@@ -78,13 +78,12 @@ const readFileWithGuard = (
     existsSync(join(rig.testDir ?? '', filePath)),
     `${context}: expected ${filePath} to exist, but it was missing (possibly renamed or moved).`,
   ).toBe(true);
-  return rig.readFile(filePath);
+  return readFileOrFail(rig, filePath);
 };
 
 describe('Refactoring', () => {
   evalTest('USUALLY_PASSES', {
     name: 'duplicate email validation should be consolidated into shared utility',
-    timeout: 180000,
     prompt:
       'The email validation logic is duplicated across these three service files. Consolidate it.',
     files: {
@@ -212,7 +211,6 @@ export function subscribe(email: string) {
 
   evalTest('USUALLY_PASSES', {
     name: 'retry logic should be extracted into shared utility used by both clients',
-    timeout: 180000,
     prompt:
       'Extract the retry logic from apiClient.ts and httpClient.ts into a shared utility.',
     files: {
@@ -306,7 +304,6 @@ export async function requestJson(path: string) {
 
   evalTest('USUALLY_PASSES', {
     name: 'monolith class responsibilities should be split into separate modules',
-    timeout: 180000,
     prompt: 'This class has too many responsibilities. Split it.',
     files: {
       'src/monolith.ts': `
@@ -376,7 +373,7 @@ export class CommerceGateway {
       ).toBeGreaterThanOrEqual(2);
 
       if (monolithExists) {
-        const monolith = rig.readFile('src/monolith.ts');
+        const monolith = readFileOrFail(rig, 'src/monolith.ts');
         expect(monolith).toMatch(
           /from ['"].*auth|from ['"].*cache|from ['"].*fetch|new\s+(Auth|Cache|Product|Gateway)/i,
         );

@@ -5,7 +5,21 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
+
+const tryReadFile = (
+  rig: { readFile: (fileName: string) => string },
+  filePath: string,
+): string | null => {
+  try {
+    return rig.readFile(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+};
 
 describe('Context Awareness', () => {
   /**
@@ -42,7 +56,10 @@ export function formatCurrency(amount: number): string {
             /* */
           }
         }
-        const filePath = typeof args === 'string' ? '' : args?.file_path || '';
+        const filePath =
+          typeof args === 'object' && args !== null
+            ? ((args as Record<string, string>)['file_path'] ?? '')
+            : '';
         return filePath.endsWith('.ts');
       });
 
@@ -57,7 +74,12 @@ export function formatCurrency(amount: number): string {
             return false;
           }
         }
-        return (args?.file_path || '').endsWith('.ts');
+        if (typeof args !== 'object' || args === null) {
+          return false;
+        }
+        return (
+          ((args as Record<string, string>)['file_path'] ?? '') as string
+        ).endsWith('.ts');
       });
 
       expect(
@@ -101,10 +123,10 @@ export function lower(s) { return s.toLowerCase(); }
         }
         const filePath =
           typeof args === 'object' && args !== null
-            ? (args as Record<string, string>).file_path
+            ? (args as Record<string, string>)['file_path']
             : null;
         if (filePath) {
-          const helperContent = rig.readFile(filePath);
+          const helperContent = readFileOrFail(rig, filePath);
           // Should use export, not module.exports
           expect(helperContent).toMatch(/export\s+(function|const|default)/);
           expect(helperContent).not.toContain('module.exports');
@@ -140,7 +162,7 @@ indent_size = 4
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('math.js');
+      const content = readFileOrFail(rig, 'math.js');
       expect(content).toContain('multiply');
       // Existing functions should still be there
       expect(content).toContain('add');
@@ -175,11 +197,22 @@ module.exports = { greet };
       expect(writeCalls.length).toBeGreaterThanOrEqual(1);
 
       // Find test file
-      const testFile =
-        rig.readFile('src/greet.test.js') ||
-        rig.readFile('test/greet.test.js') ||
-        rig.readFile('__tests__/greet.test.js') ||
-        rig.readFile('greet.test.js');
+      const candidatePaths = [
+        'src/greet.test.js',
+        'test/greet.test.js',
+        '__tests__/greet.test.js',
+        'greet.test.js',
+      ];
+      const discoveredTestFile = candidatePaths
+        .map((filePath) => ({ filePath, content: tryReadFile(rig, filePath) }))
+        .find(({ content }) => content !== null);
+
+      expect(
+        discoveredTestFile,
+        `Expected generated test file at one of: ${candidatePaths.join(', ')}`,
+      ).toBeTruthy();
+
+      const testFile = discoveredTestFile?.content;
 
       if (testFile) {
         // Should use Jest syntax (expect/toBe), not Mocha (assert/chai)
@@ -205,7 +238,7 @@ module.exports = { add, subtract }
 `,
     },
     assert: async (rig) => {
-      const content = rig.readFile('math.js');
+      const content = readFileOrFail(rig, 'math.js');
       expect(content).toContain('divide');
       // Existing code has no semicolons, new code should match
       // Count semicolons -- should be minimal (0 or very few)

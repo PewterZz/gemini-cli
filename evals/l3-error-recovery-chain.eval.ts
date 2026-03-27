@@ -13,7 +13,7 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { evalTest, readFileOrFail } from './test-helper.js';
 
 describe('L3 Error Recovery Chain', () => {
   /**
@@ -97,7 +97,7 @@ test('sum returns correct total', () => {
       ).toBeGreaterThanOrEqual(1);
 
       // The fix should be in math.ts
-      const mathContent = rig.readFile('src/math.ts');
+      const mathContent = readFileOrFail(rig, 'src/math.ts');
       expect(
         mathContent.includes('i < arr.length') ||
           mathContent.includes('i < array.length'),
@@ -139,7 +139,7 @@ export { validateUser } from './auth/validator';
       ).toBeGreaterThanOrEqual(1);
 
       // The fix should add a null guard
-      const validatorContent = rig.readFile('src/auth/validator.ts');
+      const validatorContent = readFileOrFail(rig, 'src/auth/validator.ts');
       expect(
         validatorContent.includes('null') ||
           validatorContent.includes('undefined') ||

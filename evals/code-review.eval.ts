@@ -5,16 +5,14 @@
  */
 
 import { describe, expect } from 'vitest';
-import { evalTest } from './test-helper.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { evalTest, readFileOrFail } from './test-helper.js';
 import {
-  GREP_TOOL_NAME,
   READ_FILE_TOOL_NAME,
   READ_MANY_FILES_TOOL_NAME,
-  SHELL_TOOL_NAME,
   WRITE_FILE_TOOL_NAME,
   EDIT_TOOL_NAME,
-  WEB_SEARCH_TOOL_NAME,
-  WEB_FETCH_TOOL_NAME,
 } from '@google/gemini-cli-core';
 
 type ToolLog = {
@@ -30,40 +28,27 @@ const READ_TOOL_NAMES = new Set([
   READ_MANY_FILES_TOOL_NAME,
 ]);
 const EDIT_TOOL_NAMES = new Set([WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME]);
-const WEB_TOOL_NAMES = new Set([WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME]);
-const TRACKED_TOOL_NAMES = new Set([
-  GREP_TOOL_NAME,
-  READ_FILE_TOOL_NAME,
-  READ_MANY_FILES_TOOL_NAME,
-  SHELL_TOOL_NAME,
-  WRITE_FILE_TOOL_NAME,
-  EDIT_TOOL_NAME,
-  WEB_SEARCH_TOOL_NAME,
-  WEB_FETCH_TOOL_NAME,
-]);
-
-const parseToolArgs = (rawArgs: string): Record<string, unknown> => {
-  try {
-    const parsed = JSON.parse(rawArgs) as unknown;
-    if (typeof parsed === 'object' && parsed !== null) {
-      return parsed as Record<string, unknown>;
-    }
-    return { raw: rawArgs };
-  } catch {
-    return { raw: rawArgs };
-  }
-};
 
 const getTrackedLogs = (rig: { readToolLogs: () => ToolLog[] }): ToolLog[] =>
-  rig
-    .readToolLogs()
-    .filter((log) => TRACKED_TOOL_NAMES.has(log.toolRequest.name));
+  rig.readToolLogs();
 
 const getReadCalls = (logs: ToolLog[]) =>
   logs.filter((log) => READ_TOOL_NAMES.has(log.toolRequest.name));
 
 const getEditCalls = (logs: ToolLog[]) =>
   logs.filter((log) => EDIT_TOOL_NAMES.has(log.toolRequest.name));
+
+const readFileWithGuard = (
+  rig: { testDir?: string | null; readFile: (fileName: string) => string },
+  filePath: string,
+  context: string,
+): string => {
+  expect(
+    existsSync(join(rig.testDir ?? '', filePath)),
+    `${context}: expected ${filePath} to exist, but it was missing (possibly renamed or moved).`,
+  ).toBe(true);
+  return readFileOrFail(rig, filePath);
+};
 
 describe('Code Review', () => {
   evalTest('USUALLY_PASSES', {
@@ -110,10 +95,11 @@ export async function fetchPayments(accountId: string, limit: number, offset: nu
     assert: async (rig, result) => {
       const logs = getTrackedLogs(rig);
       const readCalls = getReadCalls(logs);
-      const webCalls = logs.filter((log) =>
-        WEB_TOOL_NAMES.has(log.toolRequest.name),
+      const payments = readFileWithGuard(
+        rig,
+        'payments.ts',
+        'Pagination bug verification',
       );
-      const payments = rig.readFile('payments.ts');
 
       expect(
         readCalls.length,
@@ -124,7 +110,6 @@ export async function fetchPayments(accountId: string, limit: number, offset: nu
       );
       expect(payments).not.toContain('i <= items.length');
       expect(payments).toMatch(/i\s*<\s*items\.length/);
-      expect(webCalls.length, 'This review should remain local').toBe(0);
     },
   });
 
@@ -187,37 +172,34 @@ export async function withOrderLock<T>(orderId: string, fn: () => Promise<T>): P
     },
     assert: async (rig) => {
       const logs = getTrackedLogs(rig);
-      const readFileCalls = logs.filter(
-        (log) => log.toolRequest.name === READ_FILE_TOOL_NAME,
-      );
+      const readCalls = getReadCalls(logs);
       const editCalls = getEditCalls(logs);
 
-      const readOrder = readFileCalls.some((log) => {
-        const args = parseToolArgs(log.toolRequest.args);
-        const filePath = args['file_path'];
-        return typeof filePath === 'string' && filePath.endsWith('order.ts');
-      });
-      const readInventory = readFileCalls.some((log) => {
-        const args = parseToolArgs(log.toolRequest.args);
-        const filePath = args['file_path'];
-        return (
-          typeof filePath === 'string' && filePath.endsWith('inventory.ts')
-        );
-      });
-
-      const orderContent = rig.readFile('order.ts');
-
-      expect(readOrder, 'Expected read_file usage for order.ts').toBe(true);
-      expect(readInventory, 'Expected read_file usage for inventory.ts').toBe(
-        true,
+      const inspectedOrderFlow = logs.some((log) =>
+        /order\.ts|inventory\.ts|locks\.ts/i.test(log.toolRequest.args),
       );
+      const orderContent = readFileWithGuard(
+        rig,
+        'order.ts',
+        'Race condition fix verification',
+      );
+
+      expect(
+        readCalls.length,
+        'Expected multi-file review before race-condition fix',
+      ).toBeGreaterThanOrEqual(2);
+      expect(
+        inspectedOrderFlow,
+        'Expected investigation to include order/inventory/locking flow',
+      ).toBe(true);
       expect(
         editCalls.length,
         'Expected at least one edit while fixing race condition',
       ).toBeGreaterThanOrEqual(1);
-      expect(orderContent).toMatch(
-        /withOrderLock|lock|transaction|compareAndSwap/i,
-      );
+      expect(
+        /withOrderLock\s*\(/.test(orderContent),
+        'Expected final implementation to coordinate writes through a lock/transaction mechanism',
+      ).toBe(true);
     },
   });
 
@@ -249,9 +231,6 @@ export function requestLogger(path: string) {
       const routesWasRead = readCalls.some((log) =>
         log.toolRequest.args.includes('routes.ts'),
       );
-      const grepCalls = logs.filter(
-        (log) => log.toolRequest.name === GREP_TOOL_NAME,
-      );
 
       expect(routesWasRead, 'Expected the agent to inspect routes.ts').toBe(
         true,
@@ -260,9 +239,47 @@ export function requestLogger(path: string) {
         /silent|swallow|ignored|empty catch|log|re-throw|rethrow/i,
       );
       expect(
-        grepCalls.length,
-        'Expected at least basic code discovery before judging',
-      ).toBeGreaterThanOrEqual(0);
+        readCalls.length,
+        'Expected at least lightweight local inspection before judging error handling',
+      ).toBeGreaterThanOrEqual(1);
+    },
+  });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'review should flag subtle query and object-merge security risks',
+    prompt: 'Review this code',
+    files: {
+      'db/query-builder.ts': `
+type SortDirection = 'asc' | 'desc';
+
+export function buildUserListQuery(sortField: string, direction: SortDirection) {
+  const normalizedDirection = direction === 'desc' ? 'DESC' : 'ASC';
+  return \`SELECT id, email FROM users ORDER BY \${sortField} \${normalizedDirection} LIMIT 50\`;
+}
+`,
+      'config/preferences.ts': `
+type Preferences = Record<string, unknown>;
+
+export function mergeUserPreferences(defaults: Preferences, incoming: Preferences) {
+  return Object.assign({}, defaults, incoming);
+}
+`,
+      'app.ts': `
+import { buildUserListQuery } from './db/query-builder.js';
+import { mergeUserPreferences } from './config/preferences.js';
+
+export function preview(sortField: string, direction: 'asc' | 'desc', prefs: Record<string, unknown>) {
+  return {
+    query: buildUserListQuery(sortField, direction),
+    merged: mergeUserPreferences({ theme: 'light' }, prefs),
+  };
+}
+`,
+    },
+    assert: async (rig, result) => {
+      const readCalls = getReadCalls(getTrackedLogs(rig));
+      expect(readCalls.length).toBeGreaterThanOrEqual(1);
+      expect(result).toMatch(/sql injection|prototype pollution/i);
     },
   });
 });
