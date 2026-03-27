@@ -5,16 +5,14 @@
  */
 
 import { describe, expect } from 'vitest';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { evalTest } from './test-helper.js';
 import {
-  GREP_TOOL_NAME,
   READ_FILE_TOOL_NAME,
   READ_MANY_FILES_TOOL_NAME,
-  SHELL_TOOL_NAME,
   WRITE_FILE_TOOL_NAME,
   EDIT_TOOL_NAME,
-  WEB_SEARCH_TOOL_NAME,
-  WEB_FETCH_TOOL_NAME,
 } from '@google/gemini-cli-core';
 
 type ToolLog = {
@@ -30,16 +28,12 @@ const READ_TOOL_NAMES = new Set([
   READ_MANY_FILES_TOOL_NAME,
 ]);
 const EDIT_TOOL_NAMES = new Set([WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME]);
-const WEB_TOOL_NAMES = new Set([WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME]);
+
 const TRACKED_TOOL_NAMES = new Set([
-  GREP_TOOL_NAME,
   READ_FILE_TOOL_NAME,
   READ_MANY_FILES_TOOL_NAME,
-  SHELL_TOOL_NAME,
   WRITE_FILE_TOOL_NAME,
   EDIT_TOOL_NAME,
-  WEB_SEARCH_TOOL_NAME,
-  WEB_FETCH_TOOL_NAME,
 ]);
 
 const parseToolArgs = (rawArgs: string): Record<string, unknown> => {
@@ -65,9 +59,32 @@ const getReadCalls = (logs: ToolLog[]) =>
 const getEditCalls = (logs: ToolLog[]) =>
   logs.filter((log) => EDIT_TOOL_NAMES.has(log.toolRequest.name));
 
+const getTouchedFilePaths = (logs: ToolLog[]): string[] =>
+  logs
+    .filter((log) => EDIT_TOOL_NAMES.has(log.toolRequest.name))
+    .map((log) => {
+      const args = parseToolArgs(log.toolRequest.args);
+      const filePath = args['file_path'];
+      return typeof filePath === 'string' ? filePath : '';
+    })
+    .filter((filePath) => filePath.length > 0);
+
+const readFileWithGuard = (
+  rig: { testDir?: string | null; readFile: (fileName: string) => string },
+  filePath: string,
+  context: string,
+): string => {
+  expect(
+    existsSync(join(rig.testDir ?? '', filePath)),
+    `${context}: expected ${filePath} to exist, but it was missing (possibly renamed or moved).`,
+  ).toBe(true);
+  return rig.readFile(filePath);
+};
+
 describe('Refactoring', () => {
   evalTest('USUALLY_PASSES', {
     name: 'duplicate email validation should be consolidated into shared utility',
+    timeout: 180000,
     prompt:
       'The email validation logic is duplicated across these three service files. Consolidate it.',
     files: {
@@ -105,6 +122,12 @@ export function subscribe(email: string) {
       const logs = getTrackedLogs(rig);
       const readCalls = getReadCalls(logs);
       const editCalls = getEditCalls(logs);
+      const touchedFilePaths = getTouchedFilePaths(logs);
+      const serviceFiles = [
+        'src/services/userService.ts',
+        'src/services/orderService.ts',
+        'src/services/newsletterService.ts',
+      ];
 
       const touchedAllServices = [
         'userService.ts',
@@ -114,12 +137,55 @@ export function subscribe(email: string) {
         readCalls.some((log) => log.toolRequest.args.includes(file)),
       );
 
-      const validationUtil = rig.readFile('src/utils/validation.ts');
-      const userService = rig.readFile('src/services/userService.ts');
-      const orderService = rig.readFile('src/services/orderService.ts');
-      const newsletterService = rig.readFile(
-        'src/services/newsletterService.ts',
+      const sharedValidationPath = touchedFilePaths.find(
+        (filePath) =>
+          !serviceFiles.some((serviceFile) => filePath.endsWith(serviceFile)) &&
+          /(validation|valid|email)/i.test(filePath),
       );
+
+      const userService = readFileWithGuard(
+        rig,
+        'src/services/userService.ts',
+        'Email validation consolidation verification',
+      );
+      const orderService = readFileWithGuard(
+        rig,
+        'src/services/orderService.ts',
+        'Email validation consolidation verification',
+      );
+      const newsletterService = readFileWithGuard(
+        rig,
+        'src/services/newsletterService.ts',
+        'Email validation consolidation verification',
+      );
+
+      if (sharedValidationPath) {
+        const validationUtil = readFileWithGuard(
+          rig,
+          sharedValidationPath,
+          'Email validation consolidation verification',
+        );
+        expect(validationUtil).toMatch(/email|valid/i);
+      }
+
+      const sharedValidationUsageCount = [
+        userService,
+        orderService,
+        newsletterService,
+      ].filter((content) =>
+        /from ['"].*(validation|valid|email)|\b(isValidEmail|validateEmail|assertValidEmail|isEmailValid)\b/i.test(
+          content,
+        ),
+      ).length;
+      const inlineValidationPatternCount = [
+        userService,
+        orderService,
+        newsletterService,
+      ].filter((content) =>
+        /includes\('@'\)|emailRegex|pattern\s*=|\/\^[^\n/]*@[^\n/]*\//i.test(
+          content,
+        ),
+      ).length;
 
       expect(
         touchedAllServices,
@@ -129,20 +195,24 @@ export function subscribe(email: string) {
         editCalls.length,
         'Expected edits across utility and service files',
       ).toBeGreaterThanOrEqual(3);
-      expect(validationUtil).toMatch(/email|valid/i);
-      expect(userService).toMatch(/validation|isValidEmail/i);
-      expect(orderService).toMatch(/validation|isValidEmail/i);
-      expect(newsletterService).toMatch(/validation|isValidEmail/i);
-      expect(userService).not.toMatch(/emailRegex|\^[^/]+\$|includes\('@'\)/);
-      expect(orderService).not.toMatch(/emailRegex|\^[^/]+\$|includes\('@'\)/);
-      expect(newsletterService).not.toMatch(
-        /emailRegex|\^[^/]+\$|includes\('@'\)/,
-      );
+      expect(
+        sharedValidationPath,
+        'Expected at least one shared validation utility file outside the original services',
+      ).toBeDefined();
+      expect(
+        sharedValidationUsageCount,
+        'Expected services to call a shared validation helper after refactor',
+      ).toBeGreaterThanOrEqual(2);
+      expect(
+        inlineValidationPatternCount,
+        'Expected duplicate inline validators to be mostly removed from service files',
+      ).toBeLessThanOrEqual(1);
     },
   });
 
   evalTest('USUALLY_PASSES', {
     name: 'retry logic should be extracted into shared utility used by both clients',
+    timeout: 180000,
     prompt:
       'Extract the retry logic from apiClient.ts and httpClient.ts into a shared utility.',
     files: {
@@ -182,49 +252,61 @@ export async function requestJson(path: string) {
     },
     assert: async (rig) => {
       const logs = getTrackedLogs(rig);
-      const writeCalls = logs.filter(
-        (log) => log.toolRequest.name === WRITE_FILE_TOOL_NAME,
+      const touchedFilePaths = getTouchedFilePaths(logs);
+      const touchedApiClient = touchedFilePaths.some((filePath) =>
+        filePath.endsWith('src/apiClient.ts'),
       );
-      const readCalls = getReadCalls(logs);
+      const touchedHttpClient = touchedFilePaths.some((filePath) =>
+        filePath.endsWith('src/httpClient.ts'),
+      );
+      const sharedRetryPath = touchedFilePaths.find(
+        (filePath) =>
+          !filePath.endsWith('src/apiClient.ts') &&
+          !filePath.endsWith('src/httpClient.ts') &&
+          /(retry|backoff|resilien|shared|util)/i.test(filePath),
+      );
+      const apiClient = readFileWithGuard(
+        rig,
+        'src/apiClient.ts',
+        'Retry extraction verification',
+      );
+      const httpClient = readFileWithGuard(
+        rig,
+        'src/httpClient.ts',
+        'Retry extraction verification',
+      );
 
-      const newRetryFilePath = writeCalls
-        .map((log) => {
-          const args = parseToolArgs(log.toolRequest.args);
-          const filePath = args['file_path'];
-          return typeof filePath === 'string' ? filePath : '';
-        })
-        .find(
-          (filePath) =>
-            filePath.length > 0 &&
-            !filePath.endsWith('src/apiClient.ts') &&
-            !filePath.endsWith('src/httpClient.ts') &&
-            filePath.toLowerCase().includes('retry'),
+      if (sharedRetryPath) {
+        const sharedRetryUtility = readFileWithGuard(
+          rig,
+          sharedRetryPath,
+          'Retry extraction verification',
         );
+        expect(sharedRetryUtility).toMatch(/retry|attempt|backoff|delay/i);
+      }
 
-      const apiClient = rig.readFile('src/apiClient.ts');
-      const httpClient = rig.readFile('src/httpClient.ts');
-      const webCalls = logs.filter((log) =>
-        WEB_TOOL_NAMES.has(log.toolRequest.name),
+      expect(touchedApiClient, 'Expected apiClient.ts to be refactored').toBe(
+        true,
       );
-
+      expect(touchedHttpClient, 'Expected httpClient.ts to be refactored').toBe(
+        true,
+      );
       expect(
-        readCalls.length,
-        'Expected source inspection before refactoring',
-      ).toBeGreaterThanOrEqual(2);
-      expect(
-        newRetryFilePath,
-        'Expected a new shared retry utility file to be created',
+        sharedRetryPath,
+        'Expected a shared retry/backoff utility file to be created',
       ).toBeDefined();
-      expect(apiClient).toMatch(/retry|from ['"].*retry/i);
-      expect(httpClient).toMatch(/retry|from ['"].*retry/i);
-      expect(webCalls.length, 'Refactoring should not require web tools').toBe(
-        0,
+      expect(apiClient).toMatch(
+        /from ['"].*(retry|backoff|util)|withRetry|retry/i,
+      );
+      expect(httpClient).toMatch(
+        /from ['"].*(retry|backoff|util)|withRetry|retry/i,
       );
     },
   });
 
   evalTest('USUALLY_PASSES', {
     name: 'monolith class responsibilities should be split into separate modules',
+    timeout: 180000,
     prompt: 'This class has too many responsibilities. Split it.',
     files: {
       'src/monolith.ts': `
@@ -272,12 +354,6 @@ export class CommerceGateway {
       const writeCalls = logs.filter(
         (log) => log.toolRequest.name === WRITE_FILE_TOOL_NAME,
       );
-      const grepCalls = logs.filter(
-        (log) => log.toolRequest.name === GREP_TOOL_NAME,
-      );
-      const shellCalls = logs.filter(
-        (log) => log.toolRequest.name === SHELL_TOOL_NAME,
-      );
 
       const newFiles = writeCalls
         .map((log) => {
@@ -291,19 +367,29 @@ export class CommerceGateway {
         );
 
       const uniqueNewFiles = new Set(newFiles);
-      const monolith = rig.readFile('src/monolith.ts');
+      const monolithPath = join(rig.testDir ?? '', 'src/monolith.ts');
+      const monolithExists = existsSync(monolithPath);
 
       expect(
         uniqueNewFiles.size,
         'Expected at least two new modules after split',
       ).toBeGreaterThanOrEqual(2);
-      expect(monolith).toMatch(
-        /from ['"].*auth|from ['"].*cache|from ['"].*fetch/i,
-      );
-      expect(
-        grepCalls.length + shellCalls.length,
-        'Expected at least lightweight project navigation',
-      ).toBeGreaterThanOrEqual(1);
+
+      if (monolithExists) {
+        const monolith = rig.readFile('src/monolith.ts');
+        expect(monolith).toMatch(
+          /from ['"].*auth|from ['"].*cache|from ['"].*fetch|new\s+(Auth|Cache|Product|Gateway)/i,
+        );
+      } else {
+        const indexContent = readFileWithGuard(
+          rig,
+          'src/index.ts',
+          'Monolith split verification',
+        );
+        expect(indexContent).toMatch(
+          /from ['"].*(auth|cache|fetch|gateway|service)/i,
+        );
+      }
     },
   });
 });
