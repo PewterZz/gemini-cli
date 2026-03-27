@@ -6,259 +6,248 @@
 
 import { describe, expect } from 'vitest';
 import { evalTest } from './test-helper.js';
+import {
+  GREP_TOOL_NAME,
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+  SHELL_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+  EDIT_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  WEB_FETCH_TOOL_NAME,
+} from '@google/gemini-cli-core';
+
+type ToolLog = {
+  toolRequest: {
+    name: string;
+    args: string;
+    success: boolean;
+  };
+};
+
+const READ_TOOL_NAMES = new Set([
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+]);
+const EDIT_TOOL_NAMES = new Set([WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME]);
+const WEB_TOOL_NAMES = new Set([WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME]);
+const TRACKED_TOOL_NAMES = new Set([
+  GREP_TOOL_NAME,
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+  SHELL_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+  EDIT_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  WEB_FETCH_TOOL_NAME,
+]);
+
+const parseToolArgs = (rawArgs: string): Record<string, unknown> => {
+  try {
+    const parsed = JSON.parse(rawArgs) as unknown;
+    if (typeof parsed === 'object' && parsed !== null) {
+      return parsed as Record<string, unknown>;
+    }
+    return { raw: rawArgs };
+  } catch {
+    return { raw: rawArgs };
+  }
+};
+
+const getTrackedLogs = (rig: { readToolLogs: () => ToolLog[] }): ToolLog[] =>
+  rig
+    .readToolLogs()
+    .filter((log) => TRACKED_TOOL_NAMES.has(log.toolRequest.name));
+
+const getReadCalls = (logs: ToolLog[]) =>
+  logs.filter((log) => READ_TOOL_NAMES.has(log.toolRequest.name));
+
+const getEditCalls = (logs: ToolLog[]) =>
+  logs.filter((log) => EDIT_TOOL_NAMES.has(log.toolRequest.name));
 
 describe('Debugging', () => {
-  /**
-   * When asked to debug a runtime error, the agent should read the
-   * relevant file and identify the issue.
-   */
   evalTest('USUALLY_PASSES', {
-    name: 'should identify a null reference error',
+    name: 'stack trace misdirection should be fixed in caller not utility',
     prompt:
-      'This code throws "Cannot read properties of undefined". Find and fix the bug in app.js.',
+      'App throws TypeError: Cannot read properties of undefined (reading map) at utils.ts:12. Fix it.',
     files: {
-      'app.js': `
-function getUserName(user) {
-  return user.profile.name;
+      'src/utils.ts': `
+type User = { id: number; name: string };
+
+export function formatUsers(users: User[]) {
+  return users.map((user) => ({
+    id: user.id,
+    displayName: user.name.toUpperCase(),
+  }));
 }
-
-function processUsers(users) {
-  return users.map(u => getUserName(u));
-}
-
-// Some users might not have a profile
-const users = [
-  { id: 1, profile: { name: 'Alice' } },
-  { id: 2 },
-  { id: 3, profile: { name: 'Charlie' } },
-];
-
-module.exports = { processUsers, users };
 `,
+      'src/routes.ts': `
+import { formatUsers } from './utils.js';
+
+export function getUsersHandler(req: { query: Record<string, string | undefined> }) {
+  const includeIds = req.query['ids']?.split(',').map((id) => Number(id));
+  const users = includeIds?.map((id) => ({ id, name: 'user-' + id }));
+  return formatUsers(users as { id: number; name: string }[]);
+}
+`,
+      'src/server.ts':
+        'import { getUsersHandler } from "./routes.js";\nexport const handler = getUsersHandler;\n',
     },
     assert: async (rig) => {
-      const content = rig.readFile('app.js');
-      // Should add null checking for user.profile
-      expect(content).toMatch(/profile\s*\?\.|\bif\b.*profile|profile\s*&&/);
-    },
-  });
+      const logs = getTrackedLogs(rig);
+      const readCalls = getReadCalls(logs);
+      const editCalls = getEditCalls(logs);
 
-  /**
-   * When tests fail due to a bug in a dependency module, the agent should
-   * trace the error to the correct file and fix the root cause, not the
-   * calling code.
-   *
-   * This tests cross-module debugging: the failing test is in calculator.ts,
-   * the bug is in math.ts. The agent must trace the failure back to the root.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should trace a test failure to the correct dependency module',
-    timeout: 600000,
-    files: {
-      'src/math.ts': `
-export function add(a: number, b: number): number {
-  return a - b; // BUG: should be addition
-}
-`,
-      'src/calculator.ts': `
-import { add } from './math.js';
-
-export function calculateTotal(a: number, b: number): number {
-  return add(a, b);
-}
-`,
-      'src/calculator.test.ts': `
-import { expect, test } from 'vitest';
-import { calculateTotal } from './calculator.js';
-
-test('correctly adds two numbers', () => {
-  expect(calculateTotal(2, 3)).toBe(5);
-});
-`,
-      'package.json': JSON.stringify({
-        name: 'test-project',
-        type: 'module',
-        scripts: { test: 'vitest run' },
-        devDependencies: { vitest: '^2.0.0' },
-      }),
-      'tsconfig.json': JSON.stringify({
-        compilerOptions: {
-          target: 'ESNext',
-          module: 'ESNext',
-          moduleResolution: 'node',
-          strict: true,
-          skipLibCheck: true,
-        },
-      }),
-    },
-    prompt:
-      'The tests in this project are failing. Diagnose the issue, fix the bug, and ensure all tests pass.',
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-
-      // Agent must have run the tests to observe the failure
-      const shellCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'run_shell_command',
+      const readUtils = readCalls.some((log) =>
+        log.toolRequest.args.includes('utils.ts'),
       );
-      const ranTests = shellCalls.some((log) => {
-        let args = log.toolRequest.args;
-        if (typeof args === 'string') {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            /* */
-          }
-        }
-        const cmd =
-          typeof args === 'string'
-            ? args
-            : ((args as Record<string, string>).command ?? '');
+      const readRoutes = readCalls.some((log) =>
+        log.toolRequest.args.includes('routes.ts'),
+      );
+
+      const editedRoutes = editCalls.some((log) => {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
         return (
-          cmd.includes('vitest') ||
-          cmd.includes('npm test') ||
-          cmd.includes('npm run test')
+          typeof filePath === 'string' && filePath.endsWith('src/routes.ts')
         );
       });
-      expect(ranTests, 'Expected agent to run the test suite').toBe(true);
+      const editedUtils = editCalls.some((log) => {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        return (
+          typeof filePath === 'string' && filePath.endsWith('src/utils.ts')
+        );
+      });
 
-      // The fix must be in math.ts (the root cause), not calculator.ts
-      const mathContent = rig.readFile('src/math.ts');
-      expect(
-        mathContent,
-        'Expected math.ts to use addition (a + b), not subtraction',
-      ).toContain('a + b');
-    },
-  });
+      const routesContent = rig.readFile('src/routes.ts');
 
-  /**
-   * When asked about a failing test, the agent should read both the test
-   * and the source code.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should read both test and source when debugging test failures',
-    prompt: 'The test in math.test.js is failing. Figure out why and fix it.',
-    files: {
-      'math.js': `
-function average(numbers) {
-  const sum = numbers.reduce((a, b) => a + b, 0);
-  return sum / numbers.length;
-}
-module.exports = { average };
-`,
-      'math.test.js': `
-const { average } = require('./math');
-
-test('average of empty array', () => {
-  expect(average([])).toBe(0);
-});
-
-test('average of [1,2,3]', () => {
-  expect(average([1, 2, 3])).toBe(2);
-});
-`,
-    },
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-
-      // Should read both files
-      const readCalls = toolLogs.filter(
-        (log) =>
-          log.toolRequest.name === 'read_file' ||
-          log.toolRequest.name === 'read_many_files',
+      expect(readUtils, 'Expected read of utils.ts from stack trace').toBe(
+        true,
       );
-      expect(readCalls.length).toBeGreaterThanOrEqual(1);
-
-      // Should fix the empty array case (returns NaN because 0/0)
-      const source = rig.readFile('math.js');
-      expect(source).toMatch(/length\s*===?\s*0|\.length\s*<|!numbers\.length/);
+      expect(readRoutes, 'Expected trace into routes.ts call-site').toBe(true);
+      expect(editedRoutes, 'Expected actual fix in routes.ts').toBe(true);
+      expect(editedUtils, 'Fix should not be applied only to utils.ts').toBe(
+        false,
+      );
+      expect(routesContent).toMatch(
+        /\?\.|\?\?|if\s*\(!req\.query\['ids'\]\)|\|\|\s*\[\]/,
+      );
     },
   });
 
-  /**
-   * When asked to add error handling, the agent should wrap the right
-   * sections in try/catch without over-catching.
-   */
   evalTest('USUALLY_PASSES', {
-    name: 'should add targeted error handling',
+    name: 'stale profile data bug should be fixed by correct await ordering',
     prompt:
-      'Add error handling to the fetchData function in api.js. It should return null on failure.',
+      'The user profile sometimes shows stale data even after updates. Fix it.',
     files: {
-      'api.js': `
-async function fetchData(url) {
-  const response = await fetch(url);
-  const data = await response.json();
-  return data;
-}
+      'profile.ts': `
+type Profile = { id: string; displayName: string };
 
-async function fetchMultiple(urls) {
-  const results = [];
-  for (const url of urls) {
-    results.push(await fetchData(url));
+const cache = new Map<string, Profile>();
+const db = {
+  async updateProfile(userId: string, patch: Partial<Profile>): Promise<Profile> {
+    return { id: userId, displayName: patch.displayName || 'unknown' };
+  },
+};
+
+export async function updateAndGetProfile(
+  userId: string,
+  patch: Partial<Profile>,
+): Promise<Profile> {
+  const cached = cache.get(userId);
+  const pendingWrite = db.updateProfile(userId, patch);
+
+  if (cached) {
+    return cached;
   }
-  return results;
-}
 
-module.exports = { fetchData, fetchMultiple };
+  const updated = await pendingWrite;
+  cache.set(userId, updated);
+  return updated;
+}
 `,
+      'profile.test.ts':
+        'import { updateAndGetProfile } from "./profile.js";\nexport const testFn = updateAndGetProfile;\n',
     },
     assert: async (rig) => {
-      const content = rig.readFile('api.js');
-      expect(content).toContain('try');
-      expect(content).toContain('catch');
-      expect(content).toContain('null');
-      // fetchMultiple should still exist
-      expect(content).toContain('fetchMultiple');
+      const logs = getTrackedLogs(rig);
+      const readCalls = getReadCalls(logs);
+      const editCalls = getEditCalls(logs);
+      const webCalls = logs.filter((log) =>
+        WEB_TOOL_NAMES.has(log.toolRequest.name),
+      );
+
+      const readProfile = readCalls.some((log) =>
+        log.toolRequest.args.includes('profile.ts'),
+      );
+      const editedProfile = editCalls.some((log) =>
+        log.toolRequest.args.includes('profile.ts'),
+      );
+      const content = rig.readFile('profile.ts');
+
+      expect(readProfile, 'Expected profile.ts to be inspected').toBe(true);
+      expect(editedProfile, 'Expected profile.ts to be edited').toBe(true);
+      expect(content).toMatch(/await\s+db\.updateProfile|await\s+pendingWrite/);
+      expect(content).not.toMatch(/if\s*\(cached\)\s*{\s*return cached;/);
+      expect(
+        webCalls.length,
+        'This async bug should not require web lookups',
+      ).toBe(0);
     },
   });
 
-  /**
-   * When the user provides an error message, the agent should search for
-   * the relevant code that could cause it.
-   */
   evalTest('USUALLY_PASSES', {
-    name: 'should search for code related to an error message',
+    name: 'ci-only config path failure should be traced to environment-specific loader',
     prompt:
-      'I\'m getting "EADDRINUSE: address already in use :::3000" when starting my app. Help me fix it.',
+      'Tests fail on CI with: Error: ENOENT: no such file or directory ./config/prod.json. All tests pass locally.',
     files: {
-      'server.js': `
-const http = require('http');
-const app = require('./app');
+      'src/config/loadConfig.ts': `
+import fs from 'node:fs';
 
-const PORT = 3000;
+export function loadConfig() {
+  const env = process.env['NODE_ENV'] || 'development';
+  const file = env === 'development' ? './config/dev.json' : './config/prod.json';
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+`,
+      'config/dev.json': '{"apiBase":"http://localhost:3000"}\n',
+      'config/ci.json': '{"apiBase":"http://ci.internal:3000"}\n',
+      'tests/loadConfig.test.ts': `
+import { describe, it, expect } from 'vitest';
+import { loadConfig } from '../src/config/loadConfig.js';
 
-const server = http.createServer(app);
-server.listen(PORT, () => {
-  console.log('Server running on port ' + PORT);
+describe('config', () => {
+  it('loads config', () => {
+    expect(loadConfig()).toBeDefined();
+  });
 });
 `,
-      'app.js': `
-const handlers = {
-  '/': (req, res) => res.end('Hello'),
-  '/health': (req, res) => res.end('OK'),
-};
-
-module.exports = (req, res) => {
-  const handler = handlers[req.url] || ((req, res) => {
-    res.statusCode = 404;
-    res.end('Not Found');
-  });
-  handler(req, res);
-};
-`,
+      '.github/workflows/ci.yml':
+        'name: ci\nsteps:\n  - run: NODE_ENV=test CI=true npm test\n',
     },
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
+    assert: async (rig, result) => {
+      const logs = getTrackedLogs(rig);
+      const shellCalls = logs.filter(
+        (log) => log.toolRequest.name === SHELL_TOOL_NAME,
+      );
+      const loaderInspected = logs.some((log) =>
+        log.toolRequest.args.includes('loadConfig.ts'),
+      );
+      const grepCalls = logs.filter(
+        (log) => log.toolRequest.name === GREP_TOOL_NAME,
+      );
 
-      // Should have searched or read files to find port usage
-      const discoveryCalls = toolLogs.filter(
-        (log) =>
-          log.toolRequest.name === 'grep_search' ||
-          log.toolRequest.name === 'read_file' ||
-          log.toolRequest.name === 'read_many_files',
+      expect(
+        loaderInspected,
+        'Expected investigation of config loading code',
+      ).toBe(true);
+      expect(result).toMatch(
+        /NODE_ENV|CI|prod\.json|config\/prod\.json|env-specific|ci\.json/i,
       );
       expect(
-        discoveryCalls.length,
-        'Expected agent to search for port-related code',
+        grepCalls.length + shellCalls.length,
+        'Expected active diagnosis, not guessing',
       ).toBeGreaterThanOrEqual(1);
     },
   });

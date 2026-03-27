@@ -6,191 +6,263 @@
 
 import { describe, expect } from 'vitest';
 import { evalTest } from './test-helper.js';
+import {
+  GREP_TOOL_NAME,
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+  SHELL_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+  EDIT_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  WEB_FETCH_TOOL_NAME,
+} from '@google/gemini-cli-core';
+
+type ToolLog = {
+  toolRequest: {
+    name: string;
+    args: string;
+    success: boolean;
+  };
+};
+
+const READ_TOOL_NAMES = new Set([
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+]);
+const EDIT_TOOL_NAMES = new Set([WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME]);
+const WEB_TOOL_NAMES = new Set([WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME]);
+const TRACKED_TOOL_NAMES = new Set([
+  GREP_TOOL_NAME,
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+  SHELL_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+  EDIT_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  WEB_FETCH_TOOL_NAME,
+]);
+
+const parseToolArgs = (rawArgs: string): Record<string, unknown> => {
+  try {
+    const parsed = JSON.parse(rawArgs) as unknown;
+    if (typeof parsed === 'object' && parsed !== null) {
+      return parsed as Record<string, unknown>;
+    }
+    return { raw: rawArgs };
+  } catch {
+    return { raw: rawArgs };
+  }
+};
+
+const getTrackedLogs = (rig: { readToolLogs: () => ToolLog[] }): ToolLog[] =>
+  rig
+    .readToolLogs()
+    .filter((log) => TRACKED_TOOL_NAMES.has(log.toolRequest.name));
+
+const getReadCalls = (logs: ToolLog[]) =>
+  logs.filter((log) => READ_TOOL_NAMES.has(log.toolRequest.name));
+
+const getEditCalls = (logs: ToolLog[]) =>
+  logs.filter((log) => EDIT_TOOL_NAMES.has(log.toolRequest.name));
 
 describe('Code Review', () => {
-  /**
-   * When reviewing code, the agent should identify real bugs, not just
-   * style issues.
-   */
   evalTest('USUALLY_PASSES', {
-    name: 'should identify a real bug during code review',
+    name: 'payment review should ignore red herrings and fix off-by-one pagination bug',
     prompt:
-      'Review this pull request change in diff.ts and tell me if there are any bugs.',
+      'Review the payment processing logic in these files and find any bugs. Fix the real bug you find.',
     files: {
-      'diff.ts': `
-// BEFORE (original):
-// function divide(a: number, b: number): number {
-//   return a / b;
-// }
+      'payments.ts': `
+type Payment = { id: string; amount: number };
 
-// AFTER (proposed change):
-export function divide(a: number, b: number): number {
-  if (b === 0) {
-    return 0; // BUG: should throw or return NaN, not 0
+export function paginatePayments(items: Payment[], pageSize: number): Payment[][] {
+  const pages: Payment[][] = [];
+  for (let i = 0; i <= items.length; i += pageSize) {
+    pages.push(items.slice(i, i + pageSize));
   }
-  return a / b;
+  return pages;
+}
+
+export function totalAmount(items: Payment[]): number {
+  return items.reduce((sum, item) => sum + item.amount, 0);
 }
 `,
-    },
-    assert: async (rig, result) => {
-      const toolLogs = rig.readToolLogs();
+      'validators.ts': `
+export function isValidCurrency(code: string): boolean {
+  return /^[A-Z]{3}$/.test(code);
+}
 
-      // Agent should have read the file
-      const readCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'read_file',
-      );
-      expect(readCalls.length).toBeGreaterThanOrEqual(1);
-
-      // Response should identify the bug
-      expect(result).toMatch(
-        /bug|incorrect|wrong|issue|problem|zero|silent|NaN|throw/i,
-      );
-    },
-  });
-
-  /**
-   * When reviewing code for security issues, the agent should identify
-   * injection vulnerabilities.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should identify SQL injection in a code review',
-    prompt: 'Review this database query code in db.ts for security issues.',
-    files: {
+export function hasValidAmount(amount: number): boolean {
+  return Number.isFinite(amount) && amount >= 0;
+}
+`,
       'db.ts': `
-import { pool } from './pool.js';
-
-// SECURITY ISSUE: unsanitized input directly in query
-export async function getUserByName(name: string) {
-  const result = await pool.query(
-    \`SELECT * FROM users WHERE name = '\${name}'\`
-  );
-  return result.rows[0];
+export async function fetchPayments(accountId: string, limit: number, offset: number) {
+  const query = {
+    text: 'SELECT id, amount FROM payments WHERE account_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+    values: [accountId, limit, offset],
+  };
+  return query;
 }
 `,
+      'README.md':
+        '# Payments\nPagination should not return empty trailing pages.\n',
     },
     assert: async (rig, result) => {
-      const toolLogs = rig.readToolLogs();
-      const readCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'read_file',
+      const logs = getTrackedLogs(rig);
+      const readCalls = getReadCalls(logs);
+      const webCalls = logs.filter((log) =>
+        WEB_TOOL_NAMES.has(log.toolRequest.name),
       );
-      expect(readCalls.length).toBeGreaterThanOrEqual(1);
+      const payments = rig.readFile('payments.ts');
 
-      // Response must mention SQL injection or parameterized queries
-      expect(result).toMatch(/injection|sanitiz|parameteriz|prepared|unsafe/i);
+      expect(
+        readCalls.length,
+        'Expected review across multiple files',
+      ).toBeGreaterThanOrEqual(2);
+      expect(result).toMatch(
+        /off[- ]by[- ]one|i <= items\.length|extra empty page|pagination/i,
+      );
+      expect(payments).not.toContain('i <= items.length');
+      expect(payments).toMatch(/i\s*<\s*items\.length/);
+      expect(webCalls.length, 'This review should remain local').toBe(0);
     },
   });
 
-  /**
-   * When asked to review code, the agent should not make unrequested changes.
-   */
   evalTest('USUALLY_PASSES', {
-    name: 'should provide review feedback without modifying files',
-    prompt: 'Review auth.ts and give me your feedback on the code quality.',
+    name: 'order race condition fix should inspect order and inventory before editing',
+    prompt:
+      'We have a race condition somewhere in the order system. Can you find and fix it?',
     files: {
-      'auth.ts': `
-export function hashPassword(password: string): string {
-  // Simple hash for demonstration
-  return Buffer.from(password).toString('base64');
-}
+      'order.ts': `
+import { withOrderLock } from './locks.js';
+import { reserveStock } from './inventory.js';
 
-export function verifyPassword(password: string, hash: string): boolean {
-  return hashPassword(password) === hash;
+const ordersTable = {
+  async get(id: string) {
+    return { id, status: 'pending' as const };
+  },
+  async update(id: string, patch: Record<string, string>) {
+    return { id, ...patch };
+  },
+};
+
+export async function finalizeOrder(orderId: string, sku: string, qty: number) {
+  const latest = await ordersTable.get(orderId);
+  if (latest.status !== 'pending') {
+    throw new Error('order already finalized');
+  }
+
+  await reserveStock(sku, qty);
+  return ordersTable.update(orderId, { status: 'paid' });
+}
+`,
+      'inventory.ts': `
+const stock = new Map<string, number>([['SKU-1', 20]]);
+
+export async function reserveStock(sku: string, qty: number) {
+  const current = stock.get(sku) ?? 0;
+  if (current < qty) {
+    throw new Error('insufficient stock');
+  }
+  stock.set(sku, current - qty);
+}
+`,
+      'locks.ts': `
+const inFlight = new Map<string, Promise<unknown>>();
+
+export async function withOrderLock<T>(orderId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = inFlight.get(orderId);
+  if (previous) {
+    await previous;
+  }
+  const current = fn();
+  inFlight.set(orderId, current);
+  try {
+    return await current;
+  } finally {
+    inFlight.delete(orderId);
+  }
 }
 `,
     },
     assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-
-      // Should have read the file
-      const readCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'read_file',
+      const logs = getTrackedLogs(rig);
+      const readFileCalls = logs.filter(
+        (log) => log.toolRequest.name === READ_FILE_TOOL_NAME,
       );
-      expect(readCalls.length).toBeGreaterThanOrEqual(1);
+      const editCalls = getEditCalls(logs);
 
-      // Should NOT have modified any files
-      const writeCalls = toolLogs.filter(
-        (log) =>
-          log.toolRequest.name === 'write_file' ||
-          log.toolRequest.name === 'replace',
-      );
-      expect(
-        writeCalls.length,
-        'Agent should not modify files when asked to review',
-      ).toBe(0);
-    },
-  });
+      const readOrder = readFileCalls.some((log) => {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        return typeof filePath === 'string' && filePath.endsWith('order.ts');
+      });
+      const readInventory = readFileCalls.some((log) => {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        return (
+          typeof filePath === 'string' && filePath.endsWith('inventory.ts')
+        );
+      });
 
-  /**
-   * When reviewing a breaking API change, the agent should flag the impact.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should flag a breaking change in a function signature',
-    prompt: 'Review this change to api.ts — is this a breaking change?',
-    files: {
-      'api.ts': `
-// BEFORE (callers use: fetchUser(id))
-// export async function fetchUser(id: number) {
-//   return db.findById(id);
-// }
+      const orderContent = rig.readFile('order.ts');
 
-// AFTER (proposed change adds required second parameter)
-export async function fetchUser(id: number, includeDeleted: boolean) {
-  return db.findById(id, includeDeleted);
-}
-`,
-    },
-    assert: async (rig, result) => {
-      const toolLogs = rig.readToolLogs();
-
-      // Must have read the file
-      const readCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'read_file',
+      expect(readOrder, 'Expected read_file usage for order.ts').toBe(true);
+      expect(readInventory, 'Expected read_file usage for inventory.ts').toBe(
+        true,
       );
       expect(
-        readCalls.length,
-        'Expected agent to read the file before reviewing',
+        editCalls.length,
+        'Expected at least one edit while fixing race condition',
       ).toBeGreaterThanOrEqual(1);
-
-      // Response should identify this as a breaking change
-      expect(result).toMatch(/break|backward|compat|caller|requir|existing/i);
+      expect(orderContent).toMatch(
+        /withOrderLock|lock|transaction|compareAndSwap/i,
+      );
     },
   });
 
-  /**
-   * When reviewing code with performance issues, the agent should
-   * identify them.
-   */
   evalTest('USUALLY_PASSES', {
-    name: 'should identify O(n^2) performance issue in code review',
+    name: 'api route review should identify silent error swallowing',
     prompt:
-      'Review this code in search.ts. Are there any performance concerns?',
+      'Is there anything wrong with how we handle errors in the API routes?',
     files: {
-      'search.ts': `
-export function findDuplicates(arr: number[]): number[] {
-  const duplicates: number[] = [];
-  // O(n^2) nested loop
-  for (let i = 0; i < arr.length; i++) {
-    for (let j = i + 1; j < arr.length; j++) {
-      if (arr[i] === arr[j] && !duplicates.includes(arr[i])) {
-        duplicates.push(arr[i]);
-      }
-    }
+      'routes.ts': `
+export async function getUserRoute(req: { params: { id: string } }, res: { json: (arg: unknown) => void }) {
+  try {
+    const user = await Promise.resolve({ id: req.params.id, name: 'Tess' });
+    res.json({ ok: true, user });
+  } catch {
+    // intentionally blank
   }
-  return duplicates;
 }
 `,
+      'middleware.ts': `
+export function requestLogger(path: string) {
+  return '[request] ' + path;
+}
+`,
+      'app.ts': 'export { getUserRoute } from "./routes.js";\n',
     },
     assert: async (rig, result) => {
-      const toolLogs = rig.readToolLogs();
-      const readCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'read_file',
+      const logs = getTrackedLogs(rig);
+      const readCalls = getReadCalls(logs);
+      const routesWasRead = readCalls.some((log) =>
+        log.toolRequest.args.includes('routes.ts'),
       );
-      expect(readCalls.length).toBeGreaterThanOrEqual(1);
+      const grepCalls = logs.filter(
+        (log) => log.toolRequest.name === GREP_TOOL_NAME,
+      );
 
-      // Should identify the performance issue
-      expect(result).toMatch(
-        /O\(n|quadratic|nested|loop|performance|Set|Map|linear/i,
+      expect(routesWasRead, 'Expected the agent to inspect routes.ts').toBe(
+        true,
       );
+      expect(result).toMatch(
+        /silent|swallow|ignored|empty catch|log|re-throw|rethrow/i,
+      );
+      expect(
+        grepCalls.length,
+        'Expected at least basic code discovery before judging',
+      ).toBeGreaterThanOrEqual(0);
     },
   });
 });

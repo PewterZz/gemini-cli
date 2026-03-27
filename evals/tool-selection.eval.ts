@@ -6,203 +6,295 @@
 
 import { describe, expect } from 'vitest';
 import { evalTest } from './test-helper.js';
+import {
+  GREP_TOOL_NAME,
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+  SHELL_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+  EDIT_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  WEB_FETCH_TOOL_NAME,
+} from '@google/gemini-cli-core';
+
+type ToolLog = {
+  toolRequest: {
+    name: string;
+    args: string;
+    success: boolean;
+  };
+};
+
+const READ_TOOL_NAMES = new Set([
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+]);
+const EDIT_TOOL_NAMES = new Set([WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME]);
+const WEB_TOOL_NAMES = new Set([WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME]);
+const TRACKED_TOOL_NAMES = new Set([
+  GREP_TOOL_NAME,
+  READ_FILE_TOOL_NAME,
+  READ_MANY_FILES_TOOL_NAME,
+  SHELL_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+  EDIT_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  WEB_FETCH_TOOL_NAME,
+]);
+
+const parseToolArgs = (rawArgs: string): Record<string, unknown> => {
+  try {
+    const parsed = JSON.parse(rawArgs) as unknown;
+    if (typeof parsed === 'object' && parsed !== null) {
+      return parsed as Record<string, unknown>;
+    }
+    return { command: rawArgs };
+  } catch {
+    return { command: rawArgs };
+  }
+};
+
+const getTrackedLogs = (rig: { readToolLogs: () => ToolLog[] }): ToolLog[] =>
+  rig
+    .readToolLogs()
+    .filter((log) => TRACKED_TOOL_NAMES.has(log.toolRequest.name));
+
+const getReadLikeCalls = (logs: ToolLog[]): ToolLog[] =>
+  logs.filter((log) => READ_TOOL_NAMES.has(log.toolRequest.name));
+
+const getEditCalls = (logs: ToolLog[]): ToolLog[] =>
+  logs.filter((log) => EDIT_TOOL_NAMES.has(log.toolRequest.name));
+
+const getWebCalls = (logs: ToolLog[]): ToolLog[] =>
+  logs.filter((log) => WEB_TOOL_NAMES.has(log.toolRequest.name));
+
+const getShellCommand = (log: ToolLog): string => {
+  const args = parseToolArgs(log.toolRequest.args);
+  const command = args['command'];
+  return typeof command === 'string' ? command : '';
+};
 
 describe('Tool Selection', () => {
-  /**
-   * When searching for a string in code, the agent should use grep_search
-   * rather than reading every file.
-   */
   evalTest('USUALLY_PASSES', {
-    name: 'should use grep over reading all files for string search',
+    name: 'ci failure with local pass should trigger env-pattern search',
     prompt:
-      'Search for all TODO comments in this codebase using grep_search and list them.',
+      'The CI pipeline is failing but all tests pass locally. Help me understand why.',
     files: {
-      'src/app.js':
-        '// TODO: add error handling\nconsole.log("hello");\n'.repeat(30),
-      'src/utils.js':
-        'function helper() { return true; }\n'.repeat(25) +
-        '/* TODO: optimize this */ \n',
-      'src/routes.js':
-        'const router = require("express").Router();\n'.repeat(25) +
-        '// TODO: add auth middleware\n',
-      'src/db.js': 'const pool = require("pg").Pool();\n'.repeat(30),
-      'src/middleware.js': '// request validation\n'.repeat(30),
-      'src/config.js': 'module.exports = {};\n'.repeat(30),
-      'src/logger.js': 'console.log;\n'.repeat(30),
-      'src/cache.js': 'const cache = {};\n'.repeat(30),
-      'test/app.test.js':
-        'test("works", () => { expect(true).toBe(true); });\n'.repeat(20),
-      'test/utils.test.js': 'test("helper", () => {});\n'.repeat(20),
+      '.env':
+        'NODE_ENV=development\nAPI_BASE_URL=http://localhost:3000\nFEATURE_FLAGS=local\nDB_HOST=localhost\n',
+      '.env.ci':
+        'NODE_ENV=test\nAPI_BASE_URL=http://ci.internal:8080\nFEATURE_FLAGS=ci\nDB_HOST=postgres-ci\nPAYMENTS_ENDPOINT=https://payments.internal\n',
+      'src/config.ts': `
+import fs from 'node:fs';
+
+export function loadConfig() {
+  const envFile = process.env['CI'] ? '.env.ci' : '.env';
+  const raw = fs.readFileSync(envFile, 'utf8');
+  return Object.fromEntries(
+    raw
+      .split(/\n/)
+      .filter(Boolean)
+      .map((line) => line.split('=')),
+  );
+}
+`,
+      'src/api.ts': `
+import { loadConfig } from './config.js';
+
+export function getPaymentsEndpoint() {
+  const cfg = loadConfig();
+  return cfg['PAYMENTS_ENDPOINT'] || 'http://localhost:4100';
+}
+`,
+      'src/index.ts': 'export const boot = () => true;\n',
+      'src/health.ts': 'export const health = () => ({ ok: true });\n',
+      'src/logger.ts': 'export const logger = console;\n',
+      'src/routes/users.ts': 'export const usersRoute = "/api/users";\n',
+      'src/routes/orders.ts': 'export const ordersRoute = "/api/orders";\n',
+      'tests/config.test.ts':
+        'import { describe, it, expect } from "vitest";\ndescribe("config", () => { it("loads", () => expect(true).toBe(true)); });\n',
+      'README.md':
+        '# Project\nRun tests locally with `npm test`. CI runs with `CI=true npm test`.\n',
     },
     assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const grepCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'grep_search',
+      const logs = getTrackedLogs(rig);
+      const grepCalls = logs.filter(
+        (log) => log.toolRequest.name === GREP_TOOL_NAME,
       );
+      const shellCalls = logs.filter(
+        (log) => log.toolRequest.name === SHELL_TOOL_NAME,
+      );
+      const editCalls = getEditCalls(logs);
+      const webCalls = getWebCalls(logs);
+
       expect(
         grepCalls.length,
-        'Expected agent to use grep_search for finding TODOs',
+        'Expected env-focused grep usage for CI/local divergence',
       ).toBeGreaterThanOrEqual(1);
-    },
-  });
-
-  /**
-   * When asked to count lines in files, the agent should use shell
-   * commands (wc -l) rather than reading files.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should use shell for counting operations',
-    prompt: 'How many lines of code are in the src directory?',
-    files: {
-      'src/app.js': Array.from({ length: 50 }, (_, i) => `// Line ${i}`).join(
-        '\n',
-      ),
-      'src/utils.js': Array.from({ length: 30 }, (_, i) => `// Util ${i}`).join(
-        '\n',
-      ),
-    },
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const shellCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'run_shell_command',
-      );
-      // Agent should use shell (wc, find, cloc) rather than reading every file
-      expect(shellCalls.length).toBeGreaterThanOrEqual(1);
-    },
-  });
-
-  /**
-   * When asked to check if a port is in use, the agent should use shell
-   * commands, not try to read config files.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should use shell commands for system queries',
-    prompt: 'Check if port 3000 is currently in use.',
-    files: {
-      'app.js': 'const port = 3000;',
-    },
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const shellCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'run_shell_command',
-      );
       expect(
-        shellCalls.length,
-        'Expected agent to use shell for system queries',
+        shellCalls.length + editCalls.length,
+        'Expected either shell diagnosis or a concrete file edit',
       ).toBeGreaterThanOrEqual(1);
+      expect(webCalls.length, 'This scenario should not need web tools').toBe(
+        0,
+      );
+    },
+  });
 
-      const hasPortCheck = shellCalls.some((call) => {
-        let args = call.toolRequest.args;
-        if (typeof args === 'string') {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            /* */
-          }
-        }
-        const cmd = typeof args === 'string' ? args : args?.command || '';
+  evalTest('USUALLY_PASSES', {
+    name: 'memory leak investigation should trace route to cache bug',
+    prompt:
+      'Something is causing memory leaks in production. The monitoring shows heap growing after requests to /api/users.',
+    files: {
+      'src/routes.ts': `
+import { attachRequestContext } from './middleware.js';
+import { fetchUsers } from './models/user.js';
+import { cacheUsersPage } from './utils/cache.js';
+
+export async function usersRoute(req: { query: Record<string, string | undefined> }) {
+  attachRequestContext(req);
+  const page = Number(req.query['page'] || '1');
+  const users = await fetchUsers(page);
+  return cacheUsersPage(page, users);
+}
+`,
+      'src/middleware.ts': `
+export function attachRequestContext(req: { requestId?: string }) {
+  req.requestId = Math.random().toString(16).slice(2);
+}
+`,
+      'src/models/user.ts': `
+export async function fetchUsers(page: number) {
+  return [{ id: page * 10 + 1, email: 'a@example.com' }];
+}
+`,
+      'src/utils/cache.ts': `
+const usersCache = new Map<string, unknown>();
+
+export function cacheUsersPage(page: number, users: unknown[]) {
+  const key = 'users:' + page + ':' + Date.now();
+  usersCache.set(key, users);
+  return users;
+}
+
+export function cacheSize() {
+  return usersCache.size;
+}
+`,
+      'src/telemetry.ts':
+        'export const metric = (name: string, value: number) => ({ name, value });\n',
+      'src/featureFlags.ts': 'export const isOn = (_flag: string) => true;\n',
+    },
+    assert: async (rig) => {
+      const logs = getTrackedLogs(rig);
+      const readCalls = getReadLikeCalls(logs);
+
+      const touchedRoutes = logs.some((log) =>
+        log.toolRequest.args.includes('routes.ts'),
+      );
+      const touchedCache = logs.some((log) =>
+        log.toolRequest.args.includes('cache.ts'),
+      );
+
+      expect(
+        readCalls.length,
+        'Expected multi-file tracing reads for memory-leak diagnosis',
+      ).toBeGreaterThanOrEqual(2);
+      expect(
+        touchedRoutes,
+        'Expected agent to inspect the /api/users route',
+      ).toBe(true);
+      expect(touchedCache, 'Expected agent to reach src/utils/cache.ts').toBe(
+        true,
+      );
+    },
+  });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'hardcoded db host discovery should use grep over broad reading',
+    prompt: 'Find all places where we hardcode the database host.',
+    files: {
+      'src/config/db.ts':
+        'export const dbConfig = { host: "db.internal.prod", port: 5432, ssl: true };\n',
+      'scripts/migrate.ts':
+        'const connectionString = "postgres://admin:secret@db.internal.prod:5432/app";\n',
+      'src/config/index.ts':
+        'export const mode = process.env.NODE_ENV || "development";\n',
+      'src/config/redis.ts':
+        'export const redisHost = process.env.REDIS_HOST || "redis";\n',
+      'src/services/userService.ts':
+        'export const findUser = (id: string) => ({ id });\n',
+      'src/services/orderService.ts': 'export const listOrders = () => [];\n',
+      'src/services/paymentService.ts':
+        'export const charge = async () => ({ ok: true });\n',
+      'src/db/pool.ts': 'export const pool = { query: async () => [] };\n',
+      'src/db/query.ts': 'export const query = async (_sql: string) => [];\n',
+      'src/db/seeds.ts': 'export const seed = async () => true;\n',
+      'src/http/server.ts': 'export const start = () => true;\n',
+      'README.md': '# Setup\nUse environment variables for hosts.\n',
+    },
+    assert: async (rig, result) => {
+      const logs = getTrackedLogs(rig);
+      const grepCalls = logs.filter(
+        (log) => log.toolRequest.name === GREP_TOOL_NAME,
+      );
+      const readCalls = getReadLikeCalls(logs);
+
+      expect(
+        grepCalls.length,
+        'Expected grep for pinpointing hardcoded host usage',
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        readCalls.length,
+        'Expected focused reads rather than scanning entire tree',
+      ).toBeLessThanOrEqual(4);
+      expect(result).toMatch(/src\/config\/db\.ts|db\.ts/i);
+      expect(result).toMatch(/scripts\/migrate\.ts|migrate\.ts/i);
+    },
+  });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'recently modified files should be answered using shell metadata',
+    prompt: 'Which files were modified most recently?',
+    files: {
+      'src/a.ts': 'export const a = 1;\n',
+      'src/b.ts': 'export const b = 2;\n',
+      'src/c.ts': 'export const c = 3;\n',
+      'src/d.ts': 'export const d = 4;\n',
+      'docs/notes.md': 'release notes\n',
+      'package.json': JSON.stringify({
+        name: 'recent-files',
+        version: '1.0.0',
+      }),
+    },
+    assert: async (rig) => {
+      const logs = getTrackedLogs(rig);
+      const shellCalls = logs.filter(
+        (log) => log.toolRequest.name === SHELL_TOOL_NAME,
+      );
+      const readCalls = getReadLikeCalls(logs);
+
+      const usedMetadataShellCommand = shellCalls.some((log) => {
+        const command = getShellCommand(log);
         return (
-          cmd.includes('lsof') ||
-          cmd.includes('netstat') ||
-          cmd.includes('ss ') ||
-          cmd.includes('3000')
+          command.includes('ls -lt') ||
+          command.includes('git log') ||
+          command.includes('stat ')
         );
       });
-      expect(hasPortCheck, 'Expected port checking command').toBe(true);
-    },
-  });
 
-  /**
-   * When asked to check git history, the agent should use git log, not
-   * try to read .git directory.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should use git log for history queries',
-    prompt: 'Show me the last 5 commits in this repo.',
-    files: {
-      '.git/HEAD': 'ref: refs/heads/main',
-      '.git/config': '[core]\n\trepositoryformatversion = 0',
-      'app.js': 'console.log("hello");',
-    },
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const shellCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'run_shell_command',
-      );
-
-      const gitLogCall = shellCalls.find((call) => {
-        let args = call.toolRequest.args;
-        if (typeof args === 'string') {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            /* */
-          }
-        }
-        const cmd = typeof args === 'string' ? args : args?.command || '';
-        return cmd.includes('git log');
-      });
-      expect(gitLogCall, 'Expected agent to use git log').toBeDefined();
-    },
-  });
-
-  /**
-   * For simple string replacements across files, the agent should use
-   * sed or grep+replace rather than reading each file individually.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should choose efficient tools for bulk operations',
-    prompt:
-      'Replace all console.log calls with logger.info across all files in src/.',
-    files: {
-      'src/app.js': 'console.log("starting");\nconsole.log("ready");',
-      'src/server.js': 'console.log("listening on port 3000");',
-      'src/utils.js': 'console.log("util loaded");',
-      'src/logger.js': 'module.exports = { info: console.info };',
-    },
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-
-      // Verify the replacement happened
-      const app = rig.readFile('src/app.js');
-      const server = rig.readFile('src/server.js');
-      const utils = rig.readFile('src/utils.js');
-
-      // At least some files should be updated
-      const updated = [app, server, utils].filter(
-        (content) =>
-          content.includes('logger') && !content.includes('console.log'),
-      );
       expect(
-        updated.length,
-        'Expected at least some files to be updated',
-      ).toBeGreaterThanOrEqual(2);
-    },
-  });
-
-  /**
-   * When asked a yes/no question about code, the agent should read the
-   * relevant file and answer without making changes.
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should answer questions without making changes',
-    prompt: 'Does this project use TypeScript?',
-    files: {
-      'package.json':
-        '{"name": "js-app", "dependencies": {"express": "^4.18.0"}}',
-      'src/app.js': 'console.log("hello");',
-    },
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const editCalls = toolLogs.filter(
-        (log) =>
-          log.toolRequest.name === 'write_file' ||
-          log.toolRequest.name === 'replace',
-      );
+        shellCalls.length,
+        'Expected shell usage for recency metadata queries',
+      ).toBeGreaterThanOrEqual(1);
       expect(
-        editCalls.length,
-        'Should not make edits when answering a question',
-      ).toBe(0);
+        usedMetadataShellCommand,
+        'Expected ls/git/stat style command for modified-time lookup',
+      ).toBe(true);
+      expect(
+        readCalls.length,
+        'Should not brute-force by reading many files',
+      ).toBeLessThanOrEqual(2);
     },
   });
 });
