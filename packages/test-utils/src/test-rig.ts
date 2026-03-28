@@ -373,6 +373,8 @@ export class TestRig {
 
     mkdirSync(this.testDir, { recursive: true });
     mkdirSync(this.homeDir, { recursive: true });
+    // Pre-create .gemini dir so ProjectRegistry atomic rename works with Vertex AI auth
+    mkdirSync(join(this.homeDir, '.gemini'), { recursive: true });
     if (options.fakeResponsesPath) {
       this.fakeResponsesPath = join(this.testDir, 'fake-responses.json');
       this.originalFakeResponsesPath = options.fakeResponsesPath;
@@ -444,7 +446,9 @@ export class TestRig {
         },
         security: {
           auth: {
-            selectedType: 'gemini-api-key',
+            selectedType: env['GOOGLE_GENAI_USE_VERTEXAI']
+              ? 'vertex-ai'
+              : 'gemini-api-key',
           },
           folderTrust: {
             enabled: false,
