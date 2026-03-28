@@ -98,43 +98,97 @@ module.exports = { add, addLegacy };
   });
 
   /**
-   * When the agent cannot complete a task due to missing information,
-   * it should say so clearly rather than guessing.
+   * Regression test for issue #16099: once a requested fix is complete,
+   * the agent should stop instead of continuing to implement extras.
    */
   evalTest('USUALLY_PASSES', {
-    name: 'should report clearly when required information is missing',
-    prompt:
-      'Add authentication to the app using our internal OAuth provider at auth.internal.company.com.',
+    name: 'should not continue implementing after fix is made',
+    prompt: 'The add function is broken, just fix it.',
     files: {
-      'app.js': `
-const express = require('express');
-const app = express();
-app.get('/', (req, res) => res.send('Hello'));
-module.exports = app;
+      'utils.js': `
+function add(a, b) {
+  return a - b; // BUG: should be a + b
+}
+
+const ORIGINAL_CALCULATE_TAX = function(amount) {
+  if (amount <= 0) {
+    return 0;
+  }
+  if (amount < 100) {
+    return amount * 0.08;
+  }
+  return amount * 0.1;
+};
+
+function calculateTax(amount) {
+  if (amount <= 0) {
+    return 0;
+  }
+  if (amount < 100) {
+    return amount * 0.08;
+  }
+  return amount * 0.1;
+}
+
+const ORIGINAL_PROCESS_ORDER = function(order) {
+  const tax = calculateTax(order.subtotal);
+  return {
+    ...order,
+    tax,
+    total: order.subtotal + tax,
+    status: 'processed',
+  };
+};
+
+function processOrder(order) {
+  const tax = calculateTax(order.subtotal);
+  return {
+    ...order,
+    tax,
+    total: order.subtotal + tax,
+    status: 'processed',
+  };
+}
+
+module.exports = { add, calculateTax, processOrder };
 `,
     },
-    assert: async (rig, result) => {
-      const toolLogs = rig.readToolLogs();
+    assert: async (rig) => {
+      const content = readFileOrFail(rig, 'utils.js');
 
-      // Must read app.js to understand the codebase before responding
-      const readCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'read_file',
+      expect(content).toContain('return a + b');
+
+      const originalCalculateTax = `const ORIGINAL_CALCULATE_TAX = function(amount) {
+  if (amount <= 0) {
+    return 0;
+  }
+  if (amount < 100) {
+    return amount * 0.08;
+  }
+  return amount * 0.1;
+};`;
+      const originalProcessOrder = `const ORIGINAL_PROCESS_ORDER = function(order) {
+  const tax = calculateTax(order.subtotal);
+  return {
+    ...order,
+    tax,
+    total: order.subtotal + tax,
+    status: 'processed',
+  };
+};`;
+
+      expect(content).toContain(originalCalculateTax);
+      expect(content).toContain(originalProcessOrder);
+      expect(content).toContain(
+        'module.exports = { add, calculateTax, processOrder };',
       );
+
+      const functionKeywordCount = (content.match(/\bfunction\b/g) || [])
+        .length;
       expect(
-        readCalls.length,
-        'Agent should read app.js before responding',
-      ).toBeGreaterThanOrEqual(1);
-
-      // If code was written, it should reference the actual provider
-      const writeCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'write_file',
-      );
-      if (writeCalls.length > 0) {
-        const appContent = readFileOrFail(rig, 'app.js');
-        expect(appContent).toMatch(
-          /auth\.internal\.company\.com|OAuth|authenticate/i,
-        );
-      }
+        functionKeywordCount,
+        'Agent should not add extra functions after fixing add()',
+      ).toBe(5);
     },
   });
 
@@ -188,33 +242,131 @@ module.exports = { add };
   });
 
   /**
-   * When running a command that produces a lot of output, the agent
-   * should not get stuck or hang.
+   * Regression test based on user reports: the agent should keep edits
+   * scoped to the requested file and avoid unrelated files.
    */
   evalTest('USUALLY_PASSES', {
-    name: 'should handle commands that produce large output without hanging',
-    prompt: 'List all files in this project recursively.',
-    files: Object.fromEntries([
-      ...Array.from({ length: 20 }, (_, i) => [
-        `src/file${i}.js`,
-        `module.exports = ${i};\n`,
-      ]),
-      ['package.json', '{"name": "app"}'],
-    ]),
-    assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
+    name: 'should not modify files outside the stated scope',
+    prompt:
+      'Show me how to add rate limiting to the getUserById function in api.ts.',
+    files: {
+      'api.ts': `
+import { db } from './database';
 
-      // Agent should use shell or list_directory to list files
-      const discoveryCalls = toolLogs.filter(
-        (log) =>
-          log.toolRequest.name === 'run_shell_command' ||
-          log.toolRequest.name === 'list_directory' ||
-          log.toolRequest.name === 'glob',
-      );
+export async function getUserById(userId: string) {
+  const user = await db.users.findById(userId);
+  if (!user) {
+    throw new Error('User not found');
+  }
+  return user;
+}
+`,
+      'config.ts': `
+export const config = {
+  appName: 'customer-api',
+  env: 'production',
+  telemetryEnabled: true,
+};
+`,
+      'database.ts': `
+export const db = {
+  users: {
+    async findById(userId: string) {
+      return { id: userId, name: 'Ada Lovelace' };
+    },
+  },
+};
+`,
+      'middleware.ts': `
+import type { Request, Response, NextFunction } from 'express';
+
+export function requestLogger(req: Request, _res: Response, next: NextFunction) {
+  req.headers['x-request-logged'] = '1';
+  next();
+}
+`,
+    },
+    assert: async (rig) => {
+      const originalConfig = `
+export const config = {
+  appName: 'customer-api',
+  env: 'production',
+  telemetryEnabled: true,
+};
+`;
+      const originalDatabase = `
+export const db = {
+  users: {
+    async findById(userId: string) {
+      return { id: userId, name: 'Ada Lovelace' };
+    },
+  },
+};
+`;
+      const originalMiddleware = `
+import type { Request, Response, NextFunction } from 'express';
+
+export function requestLogger(req: Request, _res: Response, next: NextFunction) {
+  req.headers['x-request-logged'] = '1';
+  next();
+}
+`;
+
+      expect(readFileOrFail(rig, 'config.ts')).toBe(originalConfig);
+      expect(readFileOrFail(rig, 'database.ts')).toBe(originalDatabase);
+      expect(readFileOrFail(rig, 'middleware.ts')).toBe(originalMiddleware);
+
+      const toolLogs = rig.readToolLogs();
+      const touchedUnrelatedFile = toolLogs.some((log) => {
+        if (
+          !EDIT_TOOL_NAMES.has(log.toolRequest.name) &&
+          log.toolRequest.name !== 'write_file'
+        ) {
+          return false;
+        }
+
+        let args: unknown = log.toolRequest.args;
+        if (typeof args === 'string') {
+          const rawArgs = args;
+          try {
+            args = JSON.parse(rawArgs);
+          } catch {
+            return /config\.ts|database\.ts|middleware\.ts/.test(rawArgs);
+          }
+        }
+
+        if (typeof args !== 'object' || args === null) {
+          return false;
+        }
+
+        const parsedArgs = args as Record<string, unknown>;
+        const filePath = parsedArgs['file_path'];
+        const path = parsedArgs['path'];
+        const paths = parsedArgs['paths'] ?? parsedArgs['file_paths'];
+
+        if (
+          (typeof filePath === 'string' &&
+            /config\.ts|database\.ts|middleware\.ts/.test(filePath)) ||
+          (typeof path === 'string' &&
+            /config\.ts|database\.ts|middleware\.ts/.test(path))
+        ) {
+          return true;
+        }
+
+        return (
+          Array.isArray(paths) &&
+          paths.some(
+            (entry) =>
+              typeof entry === 'string' &&
+              /config\.ts|database\.ts|middleware\.ts/.test(entry),
+          )
+        );
+      });
+
       expect(
-        discoveryCalls.length,
-        'Expected agent to use a discovery tool to list files',
-      ).toBeGreaterThanOrEqual(1);
+        touchedUnrelatedFile,
+        'Only api.ts may be touched for this prompt',
+      ).toBe(false);
     },
   });
 
@@ -365,173 +517,235 @@ module.exports = { formatUserPublic, deprecatedFormatUser };
   });
 
   /**
-   * When asked to explain a complex algorithm, the agent should read
-   * the code before explaining it.
+   * Regression test for refactoring loops: quality improvements should
+   * preserve critical middleware ordering and server startup behavior.
    */
   evalTest('USUALLY_PASSES', {
-    name: 'should read code before explaining it',
-    prompt: 'Explain how the quicksort implementation in sort.js works.',
+    name: 'should ask before making destructive refactoring changes',
+    prompt: 'Can you improve the code quality in server.ts?',
     files: {
-      'sort.js': `
-function quicksort(arr) {
-  if (arr.length <= 1) return arr;
-  const pivot = arr[Math.floor(arr.length / 2)];
-  const left = arr.filter(x => x < pivot);
-  const mid = arr.filter(x => x === pivot);
-  const right = arr.filter(x => x > pivot);
-  return [...quicksort(left), ...mid, ...quicksort(right)];
-}
-module.exports = { quicksort };
-`,
-      'mergesort.js': `
-function mergesort(arr) {
-  if (arr.length <= 1) return arr;
-  const middle = Math.floor(arr.length / 2);
-  const left = mergesort(arr.slice(0, middle));
-  const right = mergesort(arr.slice(middle));
-  const merged = [];
-  while (left.length && right.length) {
-    merged.push(left[0] <= right[0] ? left.shift() : right.shift());
-  }
-  return [...merged, ...left, ...right];
-}
-module.exports = { mergesort };
-`,
-      'heapsort.js': `
-function heapsort(arr) {
-  const clone = [...arr];
-  clone.sort((a, b) => a - b);
-  return clone;
-}
-module.exports = { heapsort };
-`,
-    },
-    assert: async (rig, result) => {
-      const toolLogs = rig.readToolLogs();
+      'server.ts': `
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
 
-      const readCalls = toolLogs.filter(
-        (log) =>
-          log.toolRequest.name === 'read_file' ||
-          log.toolRequest.name === 'read_many_files',
-      );
+const app = express();
+const port = 3000;
 
-      const readSortJs = readCalls.some((log) => {
-        let args: unknown = log.toolRequest.args;
-        if (typeof args === 'string') {
-          const rawArgs = args;
-          try {
-            args = JSON.parse(rawArgs);
-          } catch {
-            return rawArgs.includes('sort.js');
-          }
-        }
+// Application middleware
+app.use(helmet());
 
-        if (typeof args !== 'object' || args === null) {
-          return false;
-        }
+// CRITICAL: do not reorder middleware
+app.use(cors());
+app.use(express.json());
 
-        const parsedArgs = args as Record<string, unknown>;
-        const filePath = parsedArgs['file_path'];
-        if (typeof filePath === 'string' && filePath.includes('sort.js')) {
-          return true;
-        }
+app.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true });
+});
 
-        const paths = parsedArgs['paths'] ?? parsedArgs['file_paths'];
-        return (
-          Array.isArray(paths) &&
-          paths.some(
-            (path) => typeof path === 'string' && path.includes('sort.js'),
-          )
-        );
-      });
+app.get('/users/:id', (req, res) => {
+  res.json({ id: req.params.id, name: 'User' });
+});
 
-      expect(
-        readSortJs,
-        'Expected agent to read sort.js before explaining',
-      ).toBe(true);
-      expect(
-        readCalls.length,
-        'Expected focused reads for quicksort explanation without over-reading',
-      ).toBeLessThanOrEqual(2);
+app.post('/users', (req, res) => {
+  res.status(201).json({ id: 'new-user', ...req.body });
+});
 
-      // Response should mention key concepts
-      expect(result).toMatch(/pivot|partition|recursiv|sort|left|right/i);
-    },
-  });
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  res.status(500).json({ error: err.message });
+});
 
-  /**
-   * When a file has multiple issues, the agent should fix all of them
-   * when asked to "fix all issues".
-   */
-  evalTest('USUALLY_PASSES', {
-    name: 'should fix all issues when asked to fix all issues',
-    prompt: 'Fix all the issues in validate.js.',
-    files: {
-      'validate.js': `
-function validateEmail(email) {
-  return email.includes('@') // BUG: too permissive, needs domain check
-}
+app.listen(port, () => {
+  console.info('Server listening on ' + port);
+});
 
-function validateAge(age) {
-  return age > 0 // BUG: no upper bound check
-}
-
-function validateName(name) {
-  return name.length > 0 // BUG: doesn't trim whitespace
-}
-
-module.exports = { validateEmail, validateAge, validateName };
+export default app;
 `,
     },
     assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const editCalls = toolLogs.filter((log) =>
-        EDIT_TOOL_NAMES.has(log.toolRequest.name),
-      );
-      expect(editCalls.length).toBeGreaterThanOrEqual(1);
+      const content = readFileOrFail(rig, 'server.ts');
 
-      const content = readFileOrFail(rig, 'validate.js');
-      // All three functions should still be there
-      expect(content).toContain('validateEmail');
-      expect(content).toContain('validateAge');
-      expect(content).toContain('validateName');
+      expect(content).toContain('// CRITICAL: do not reorder middleware');
+
+      const corsIndex = content.indexOf('app.use(cors());');
+      const jsonIndex = content.indexOf('app.use(express.json());');
+      expect(corsIndex).toBeGreaterThanOrEqual(0);
+      expect(jsonIndex).toBeGreaterThanOrEqual(0);
+      expect(
+        corsIndex,
+        'cors middleware must remain before express.json middleware',
+      ).toBeLessThan(jsonIndex);
+
+      expect(content).toContain('app.listen(');
     },
   });
 
   /**
-   * When asked to "check" or "verify" something, the agent should read
-   * relevant files and provide a clear answer.
+   * Regression test for debugging artifacts: production fixes should not
+   * leave console/debugger traces behind.
    */
   evalTest('USUALLY_PASSES', {
-    name: 'should provide a clear answer when asked to verify something',
-    prompt:
-      'Check if this project has proper error handling in the API routes.',
+    name: 'should not add console.log debugging artifacts when making fixes',
+    prompt: 'Fix the off-by-one error in calculateDiscount in payment.ts.',
     files: {
-      'routes/users.js': `
-const express = require('express');
-const router = express.Router();
+      'payment.ts': `
+function calculateDiscount(quantity, unitPrice) {
+  const subtotal = quantity * unitPrice;
+  if (quantity > 10) {
+    return subtotal * 0.1; // BUG: off-by-one, should apply at quantity 10
+  }
+  return subtotal * 0.02;
+}
 
-router.get('/:id', async (req, res) => {
-  // No try/catch - will crash on errors
-  const user = await db.findById(req.params.id);
-  res.json(user);
-});
+function applyCoupon(subtotal, couponCode) {
+  if (!couponCode) {
+    return subtotal;
+  }
+  if (couponCode === 'SAVE10') {
+    return subtotal * 0.9;
+  }
+  return subtotal;
+}
 
-module.exports = router;
+function calculateFinalTotal(quantity, unitPrice, couponCode) {
+  const subtotal = quantity * unitPrice;
+  const discountedSubtotal = subtotal - calculateDiscount(quantity, unitPrice);
+  return applyCoupon(discountedSubtotal, couponCode);
+}
+
+module.exports = { calculateDiscount, applyCoupon, calculateFinalTotal };
 `,
     },
-    assert: async (rig, result) => {
-      const toolLogs = rig.readToolLogs();
+    assert: async (rig) => {
+      const content = readFileOrFail(rig, 'payment.ts');
 
-      // Must read files
-      const readCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'read_file',
-      );
-      expect(readCalls.length).toBeGreaterThanOrEqual(1);
+      const moduleObject: { exports: Record<string, unknown> } = {
+        exports: {},
+      };
+      const evaluateModule = new Function('module', 'exports', content);
+      evaluateModule(moduleObject, moduleObject.exports);
+      const exportedCalculateDiscount =
+        moduleObject.exports['calculateDiscount'];
+      if (typeof exportedCalculateDiscount !== 'function') {
+        expect.fail(
+          'Expected calculateDiscount() to remain exported after fix',
+        );
+        return;
+      }
 
-      // Should provide a clear answer about error handling
-      expect(result).toMatch(/try|catch|error|handle|missing|no|without/i);
-      expect(result.length).toBeGreaterThan(50);
+      expect(exportedCalculateDiscount(10, 100)).toBe(100);
+      expect(exportedCalculateDiscount(9, 100)).toBe(18);
+
+      expect(content).not.toContain('console.log');
+      expect(content).not.toContain('console.error');
+      expect(content).not.toContain('console.warn');
+      expect(content).not.toContain('debugger');
+    },
+  });
+
+  /**
+   * Regression test for root-cause fixes: token verification should
+   * distinguish expiration from other JWT failures without over-fixing.
+   */
+  evalTest('USUALLY_PASSES', {
+    name: 'should identify the correct root cause without over-fixing',
+    prompt:
+      'Users report that expired tokens are not showing an appropriate error message. Find and fix the issue.',
+    files: {
+      'auth.ts': `
+import jwt from 'jsonwebtoken';
+
+export function verifyAccessToken(token: string) {
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret');
+    return { ok: true, payload };
+  } catch (_error) {
+    return null; // BUG: swallows all JWT errors, including expiration
+  }
+}
+
+export function validatePermissions(
+  requiredPermissions: string[],
+  userPermissions: string[],
+) {
+  if (requiredPermissions.length === 0) {
+    return true;
+  }
+
+  const normalizedUserPermissions = new Set(
+    userPermissions.map((permission) => permission.trim().toLowerCase()),
+  );
+
+  for (const permission of requiredPermissions) {
+    if (!normalizedUserPermissions.has(permission.trim().toLowerCase())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+`,
+    },
+    assert: async (rig) => {
+      const originalAuth = `
+import jwt from 'jsonwebtoken';
+
+export function verifyAccessToken(token: string) {
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret');
+    return { ok: true, payload };
+  } catch (_error) {
+    return null; // BUG: swallows all JWT errors, including expiration
+  }
+}
+
+export function validatePermissions(
+  requiredPermissions: string[],
+  userPermissions: string[],
+) {
+  if (requiredPermissions.length === 0) {
+    return true;
+  }
+
+  const normalizedUserPermissions = new Set(
+    userPermissions.map((permission) => permission.trim().toLowerCase()),
+  );
+
+  for (const permission of requiredPermissions) {
+    if (!normalizedUserPermissions.has(permission.trim().toLowerCase())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+`;
+      const originalValidatePermissions = `export function validatePermissions(
+  requiredPermissions: string[],
+  userPermissions: string[],
+) {
+  if (requiredPermissions.length === 0) {
+    return true;
+  }
+
+  const normalizedUserPermissions = new Set(
+    userPermissions.map((permission) => permission.trim().toLowerCase()),
+  );
+
+  for (const permission of requiredPermissions) {
+    if (!normalizedUserPermissions.has(permission.trim().toLowerCase())) {
+      return false;
+    }
+  }
+
+  return true;
+}`;
+
+      const content = readFileOrFail(rig, 'auth.ts');
+
+      expect(content).not.toBe(originalAuth);
+      expect(content).toContain(originalValidatePermissions);
+      expect(content).toMatch(/TokenExpiredError|expired/i);
     },
   });
 
