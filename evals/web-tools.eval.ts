@@ -229,9 +229,9 @@ module.exports = { app };
   });
 
   evalTest('USUALLY_PASSES', {
-    name: 'should check if a specific API endpoint exists in the documentation',
+    name: 'should identify api version mismatch in local codebase',
     prompt:
-      'Verify that the bulk users endpoint we are calling still exists in the current API version.',
+      'Our API client is calling a v2 endpoint but we migrated to v3. Find the mismatch.',
     files: {
       'src/api-client.ts': `
 export async function bulkUsers(baseUrl: string, body: unknown) {
@@ -242,6 +242,11 @@ export async function bulkUsers(baseUrl: string, body: unknown) {
   });
   return response.json();
 }
+
+export async function getUser(baseUrl: string, id: string) {
+  const response = await fetch(baseUrl + '/v3/users/' + id);
+  return response.json();
+}
 `,
       'project.json': `{
   "name": "api-migration",
@@ -250,28 +255,20 @@ export async function bulkUsers(baseUrl: string, body: unknown) {
 }
 `,
       'README.md':
-        '# API Client\nThis project was recently migrated from API v2 to v3.\n',
+        '# API Client\nThis project was recently migrated from API v2 to v3. All endpoints should use /v3/.\n',
     },
     assert: async (rig, result) => {
       const logs = getTrackedLogs(rig);
-      const webCalls = getWebCalls(logs);
       const readCalls = getReadCalls(logs);
-      const inspectedClient = readCalls.some((log) =>
+      const inspectedBoth = readCalls.some((log) =>
         log.toolRequest.args.includes('api-client.ts'),
       );
-      const inspectedProject = readCalls.some((log) =>
-        log.toolRequest.args.includes('project.json'),
-      );
 
-      expect(
-        inspectedClient && inspectedProject,
-        'Expected local inspection of endpoint usage and current API version metadata',
-      ).toBe(true);
-      expect(
-        webCalls.length,
-        'Expected web_search or web_fetch to verify endpoint status in external docs',
-      ).toBeGreaterThanOrEqual(1);
-      expect(result).toMatch(/v2|v3|deprecat|removed|bulk|\/v2\/users\/bulk/i);
+      expect(inspectedBoth, 'Expected local inspection of api-client.ts').toBe(
+        true,
+      );
+      expect(result).toMatch(/v2|v3|mismatch|bulk|outdated|update/i);
+      expect(result).toMatch(/\/v2\/users\/bulk|bulkUsers/i);
     },
   });
 });

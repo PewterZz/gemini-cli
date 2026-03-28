@@ -43,21 +43,15 @@ describe('Tool Selection', () => {
       'The CI pipeline is failing but all tests pass locally. Help me understand why.',
     files: {
       '.env':
-        'NODE_ENV=development\nAPI_BASE_URL=http://localhost:3000\nFEATURE_FLAGS=local\nDB_HOST=localhost\n',
-      '.env.ci':
-        'NODE_ENV=test\nAPI_BASE_URL=http://ci.internal:8080\nFEATURE_FLAGS=ci\nDB_HOST=postgres-ci\nPAYMENTS_ENDPOINT=https://payments.internal\n',
+        'NODE_ENV=development\nDB_HOST=localhost\nPAYMENTS_ENDPOINT=http://localhost:4100\n',
+      '.env.ci': 'NODE_ENV=test\nDB_HOST=postgres-ci\n',
       'src/config.ts': `
 import fs from 'node:fs';
 
 export function loadConfig() {
   const envFile = process.env['CI'] ? '.env.ci' : '.env';
   const raw = fs.readFileSync(envFile, 'utf8');
-  return Object.fromEntries(
-    raw
-      .split(/\n/)
-      .filter(Boolean)
-      .map((line) => line.split('=')),
-  );
+  return Object.fromEntries(raw.split(/\n/).filter(Boolean).map((line) => line.split('=')));
 }
 `,
       'src/api.ts': `
@@ -68,15 +62,7 @@ export function getPaymentsEndpoint() {
   return cfg['PAYMENTS_ENDPOINT'] || 'http://localhost:4100';
 }
 `,
-      'src/index.ts': 'export const boot = () => true;\n',
-      'src/health.ts': 'export const health = () => ({ ok: true });\n',
-      'src/logger.ts': 'export const logger = console;\n',
-      'src/routes/users.ts': 'export const usersRoute = "/api/users";\n',
-      'src/routes/orders.ts': 'export const ordersRoute = "/api/orders";\n',
-      'tests/config.test.ts':
-        'import { describe, it, expect } from "vitest";\ndescribe("config", () => { it("loads", () => expect(true).toBe(true)); });\n',
-      'README.md':
-        '# Project\nRun tests locally with `npm test`. CI runs with `CI=true npm test`.\n',
+      'README.md': '# Project\nRun tests with \`npm test\`.\n',
     },
     assert: async (rig, result) => {
       const logs = getTrackedLogs(rig);

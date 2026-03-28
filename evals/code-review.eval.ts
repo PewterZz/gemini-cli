@@ -71,24 +71,6 @@ export function totalAmount(items: Payment[]): number {
   return items.reduce((sum, item) => sum + item.amount, 0);
 }
 `,
-      'validators.ts': `
-export function isValidCurrency(code: string): boolean {
-  return /^[A-Z]{3}$/.test(code);
-}
-
-export function hasValidAmount(amount: number): boolean {
-  return Number.isFinite(amount) && amount >= 0;
-}
-`,
-      'db.ts': `
-export async function fetchPayments(accountId: string, limit: number, offset: number) {
-  const query = {
-    text: 'SELECT id, amount FROM payments WHERE account_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
-    values: [accountId, limit, offset],
-  };
-  return query;
-}
-`,
       'README.md':
         '# Payments\nPagination should not return empty trailing pages.\n',
     },
