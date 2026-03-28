@@ -23,6 +23,11 @@ const configTypoFixtureLines = Array.from({ length: 80 }, (_, index) => {
 
 const configTypoFixture = `${configTypoFixtureLines.join('\n')}\n`;
 
+const spacePaddingByDesignFunction = `function padTicketNumber(value, width = 6) {
+  // space padding by design
+  return String(value).padStart(width, ' ');
+}`;
+
 describe('Minimal Changes', () => {
   /**
    * When fixing a specific bug, the agent should make targeted changes
@@ -33,23 +38,27 @@ describe('Minimal Changes', () => {
     prompt:
       'Fix the off-by-one error in the paginate function in list.js. Only change what is necessary.',
     files: {
-      'list.js': `// Pagination utility
+      'list.js': `// @format: preserve
+// Pagination utility
 // Author: Original Developer
 // Do not reformat this file
 
 function paginate(items, page, perPage) {
   const start = page * perPage; // BUG: should be (page - 1) * perPage
-  const end = start + perPage;
+    const end = start + perPage;
   return items.slice(start, end);
 }
 
 // Helper utilities
 function getPageCount(total, perPage) {
-  return Math.ceil(total / perPage);
+    return Math.ceil(total / perPage);
 }
 
 function validatePage(page, pageCount) {
-  return page >= 1 && page <= pageCount;
+  if (pageCount === 0) {
+    return false;
+  }
+    return page >= 1 && page <= pageCount;
 }
 
 module.exports = { paginate, getPageCount, validatePage };
@@ -59,10 +68,19 @@ module.exports = { paginate, getPageCount, validatePage };
       const content = readFileOrFail(rig, 'list.js');
 
       // The bug should be fixed
-      expect(content).toMatch(/page\s*-\s*1/);
+      expect(content).toContain('const start = (page - 1) * perPage;');
 
       // The comment about not reformatting should still be present
       expect(content).toContain('Do not reformat');
+      expect(content).toContain('// @format: preserve');
+
+      // Mixed indentation must be preserved exactly
+      expect(content).toContain('    const end = start + perPage;');
+      expect(content).toContain('  return items.slice(start, end);');
+      expect(content).toContain('    return Math.ceil(total / perPage);');
+      expect(content).toContain('  if (pageCount === 0) {');
+      expect(content).toContain('    return false;');
+      expect(content).toContain('    return page >= 1 && page <= pageCount;');
 
       // Helper functions should be unchanged
       expect(content).toContain('getPageCount');
@@ -92,7 +110,12 @@ function subtract(a, b) {
   return a - b;
 }
 
-module.exports = { add, subtract };
+function padTicketNumber(value, width = 6) {
+  // space padding by design
+  return String(value).padStart(width, ' ');
+}
+
+module.exports = { add, subtract, padTicketNumber };
 `,
     },
     assert: async (rig) => {
@@ -104,6 +127,7 @@ module.exports = { add, subtract };
       // Existing functions untouched
       expect(content).toContain('function add(a, b)');
       expect(content).toContain('function subtract(a, b)');
+      expect(content).toContain(spacePaddingByDesignFunction);
 
       // Comment preserved
       expect(content).toContain('do not modify existing functions');
@@ -193,8 +217,7 @@ module.exports = { capitalize, truncate, slugify };
    */
   evalTest('USUALLY_PASSES', {
     name: 'should respect scope when user says "just add"',
-    prompt:
-      'Just add a console.log at the start of the processOrder function in order.js.',
+    prompt: 'Just add a formatOrderSummary function to order.js.',
     files: {
       'order.js': `
 const TAX_RATE = 0.1;
@@ -203,6 +226,7 @@ function calculateTax(subtotal) {
   return subtotal * TAX_RATE;
 }
 
+// @deprecated -- will be removed in v3
 function applyDiscount(total, discount) {
   return total - (total * discount);
 }
@@ -220,8 +244,11 @@ module.exports = { processOrder };
     assert: async (rig) => {
       const content = readFileOrFail(rig, 'order.js');
 
-      // console.log should be added to processOrder
-      expect(content).toContain('console.log');
+      // New function should be added
+      expect(content).toContain('function formatOrderSummary');
+
+      // Deprecated function marker must be preserved
+      expect(content).toContain('// @deprecated -- will be removed in v3');
 
       // All original functions should still be there unchanged
       expect(content).toContain('calculateTax');

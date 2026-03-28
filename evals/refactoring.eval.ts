@@ -85,11 +85,11 @@ describe('Refactoring', () => {
   evalTest('USUALLY_PASSES', {
     name: 'duplicate email validation should be consolidated into shared utility',
     prompt:
-      'The email validation logic is duplicated across these three service files. Consolidate it.',
+      "The email validation logic is duplicated across these three service files. Consolidate it while preserving each service's strictness level via a shared utility that accepts a validation config object.",
     files: {
       'src/services/userService.ts': `
 export function createUser(email: string) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  const emailRegex = /^[\w.+-]+@[\w-]+\.[\w.-]+$/; // accepts plus aliases like user+tag@example.com
   if (!emailRegex.test(email)) {
     throw new Error('invalid email for user');
   }
@@ -98,8 +98,8 @@ export function createUser(email: string) {
 `,
       'src/services/orderService.ts': `
 export function assignOrderEmail(orderId: string, email: string) {
-  const looksValid = email.includes('@');
-  if (!looksValid) {
+  const strictTldRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/; // requires at least a 2-char TLD
+  if (!strictTldRegex.test(email)) {
     throw new Error('order contact email is invalid');
   }
   return { orderId, email };
@@ -107,11 +107,12 @@ export function assignOrderEmail(orderId: string, email: string) {
 `,
       'src/services/newsletterService.ts': `
 export function subscribe(email: string) {
-  const pattern = /^[\w.+-]+@[\w-]+\.[\w.-]{2,}$/;
-  if (!pattern.test(email)) {
+  const normalizedEmail = email.trim(); // strips outer whitespace before validation
+  const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!pattern.test(normalizedEmail)) {
     throw new Error('cannot subscribe invalid email');
   }
-  return { email, subscribed: true };
+  return { email: normalizedEmail, subscribed: true };
 }
 `,
       'src/index.ts':
@@ -165,6 +166,12 @@ export function subscribe(email: string) {
           'Email validation consolidation verification',
         );
         expect(validationUtil).toMatch(/email|valid/i);
+        expect(validationUtil).toMatch(
+          /function\s+\w+\([^)]*config[^)]*\)|\([^)]*config[^)]*\)\s*=>/i,
+        );
+        expect(validationUtil).toMatch(
+          /allowPlus|minTldLength|trimWhitespace|trimInput/i,
+        );
       }
 
       const sharedValidationUsageCount = [
@@ -202,6 +209,9 @@ export function subscribe(email: string) {
         sharedValidationUsageCount,
         'Expected services to call a shared validation helper after refactor',
       ).toBeGreaterThanOrEqual(2);
+      expect(userService).toMatch(/allowPlus/i);
+      expect(orderService).toMatch(/minTldLength|tld/i);
+      expect(newsletterService).toMatch(/trimWhitespace|trimInput|trim/i);
       expect(
         inlineValidationPatternCount,
         'Expected duplicate inline validators to be mostly removed from service files',
@@ -235,6 +245,10 @@ export async function requestJson(path: string) {
     try {
       return { path, ok: true, source: 'http' };
     } catch (error) {
+      const statusCode = (error as { status?: number }).status;
+      if (typeof statusCode !== 'number' || statusCode < 500 || statusCode >= 600) {
+        throw error;
+      }
       retries += 1;
       await new Promise((resolve) => setTimeout(resolve, 50 * retries * retries));
       if (retries >= 5) {
@@ -281,6 +295,9 @@ export async function requestJson(path: string) {
           'Retry extraction verification',
         );
         expect(sharedRetryUtility).toMatch(/retry|attempt|backoff|delay/i);
+        expect(sharedRetryUtility).toMatch(
+          /function\s+\w+\([^)]*(shouldRetry|retryPredicate|predicate)[^)]*\)|\([^)]*(shouldRetry|retryPredicate|predicate)[^)]*\)\s*=>/i,
+        );
       }
 
       expect(touchedApiClient, 'Expected apiClient.ts to be refactored').toBe(
@@ -299,19 +316,28 @@ export async function requestJson(path: string) {
       expect(httpClient).toMatch(
         /from ['"].*(retry|backoff|util)|withRetry|retry/i,
       );
+      expect(apiClient).toMatch(
+        /=>\s*true|shouldRetry|retryPredicate|predicate/i,
+      );
+      expect(httpClient).toMatch(
+        /500|5xx|shouldRetry|retryPredicate|predicate/i,
+      );
     },
   });
 
   evalTest('USUALLY_PASSES', {
     name: 'monolith class responsibilities should be split into separate modules',
-    prompt: 'This class has too many responsibilities. Split it.',
+    prompt:
+      'This class has too many responsibilities, including auth, fetching, caching, and rate limiting. Split it.',
     files: {
       'src/monolith.ts': `
 type User = { id: string; token: string };
 type Product = { id: string; name: string };
+type RateWindow = { minute: number; count: number };
 
 export class CommerceGateway {
   private cache = new Map<string, Product[]>();
+  private requestCounts = new Map<string, RateWindow>();
 
   async authenticate(token: string): Promise<User> {
     if (!token || token.length < 10) {
@@ -327,8 +353,25 @@ export class CommerceGateway {
     ];
   }
 
+  private enforceRateLimit(userId: string): void {
+    const currentMinute = Math.floor(Date.now() / 60000);
+    const existingWindow = this.requestCounts.get(userId);
+
+    if (!existingWindow || existingWindow.minute !== currentMinute) {
+      this.requestCounts.set(userId, { minute: currentMinute, count: 1 });
+      return;
+    }
+
+    if (existingWindow.count >= 20) {
+      throw new Error('rate limit exceeded');
+    }
+
+    existingWindow.count += 1;
+  }
+
   async getProductsForUser(token: string, category: string): Promise<Product[]> {
-    await this.authenticate(token);
+    const user = await this.authenticate(token);
+    this.enforceRateLimit(user.id);
 
     if (this.cache.has(category)) {
       return this.cache.get(category)!;
@@ -341,6 +384,10 @@ export class CommerceGateway {
 
   clearCache(): void {
     this.cache.clear();
+  }
+
+  clearRateLimits(): void {
+    this.requestCounts.clear();
   }
 }
 `,
@@ -369,13 +416,13 @@ export class CommerceGateway {
 
       expect(
         uniqueNewFiles.size,
-        'Expected at least two new modules after split',
-      ).toBeGreaterThanOrEqual(2);
+        'Expected at least three new modules after split',
+      ).toBeGreaterThanOrEqual(3);
 
       if (monolithExists) {
         const monolith = readFileOrFail(rig, 'src/monolith.ts');
         expect(monolith).toMatch(
-          /from ['"].*auth|from ['"].*cache|from ['"].*fetch|new\s+(Auth|Cache|Product|Gateway)/i,
+          /from ['"].*auth|from ['"].*cache|from ['"].*fetch|from ['"].*rate|from ['"].*limit|new\s+(Auth|Cache|Product|Gateway|Rate|Limiter)/i,
         );
       } else {
         const indexContent = readFileWithGuard(
@@ -384,7 +431,7 @@ export class CommerceGateway {
           'Monolith split verification',
         );
         expect(indexContent).toMatch(
-          /from ['"].*(auth|cache|fetch|gateway|service)/i,
+          /from ['"].*(auth|cache|fetch|gateway|service|rate|limit)/i,
         );
       }
     },
