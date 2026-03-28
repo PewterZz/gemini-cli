@@ -91,8 +91,7 @@ export async function loadOrders(baseUrl: string) {
 
   evalTest('USUALLY_PASSES', {
     name: 'deprecated crypto api check should use web and local search',
-    prompt:
-      'We are using an old crypto API. Find out if it is deprecated and what we should migrate to.',
+    prompt: 'Check if any of our crypto code is deprecated.',
     files: {
       'src/security/encryption.ts': `
 import crypto from 'node:crypto';
@@ -107,6 +106,18 @@ import crypto from 'node:crypto';
 
 export function hashToken(token: string) {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+`,
+      'src/security/modern-encryption.ts': `
+import crypto from 'node:crypto';
+
+export function encryptWithIv(
+  plaintext: string,
+  key: Buffer,
+  iv: Buffer,
+): string {
+  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  return cipher.update(plaintext, 'utf8', 'hex') + cipher.final('hex');
 }
 `,
       'src/security/index.ts': 'export { encrypt } from "./encryption.js";\n',
@@ -125,8 +136,12 @@ export function hashToken(token: string) {
         webCalls.length,
         'Expected external deprecation lookup for crypto API migration guidance',
       ).toBeGreaterThanOrEqual(1);
-      expect(result).toMatch(/createCipher|deprecated/i);
-      expect(result).toMatch(/createCipheriv|migrate|key|iv|scrypt|pbkdf2/i);
+      expect(result).toMatch(
+        /createCipher[^\n]*deprecated|deprecated[^\n]*createCipher/i,
+      );
+      expect(result).toMatch(
+        /createCipheriv[^\n]*(acceptable|correct|safe|modern|recommended|not deprecated)/i,
+      );
       expect(
         editCalls.length,
         'This task is analysis-focused and should avoid broad rewrites',
@@ -143,7 +158,7 @@ export function hashToken(token: string) {
         name: 'security-check',
         version: '1.0.0',
         dependencies: {
-          lodash: '4.17.15',
+          lodash: '4.17.20',
           express: '^4.19.2',
         },
       }),
@@ -163,10 +178,11 @@ export function hashToken(token: string) {
         webCalls.length,
         'Expected web_search or web_fetch for CVE/advisory lookup',
       ).toBeGreaterThanOrEqual(1);
-      expect(result).toMatch(/lodash|4\.17\.15/i);
+      expect(result).toMatch(/lodash|4\.17\.20/i);
       expect(result).toMatch(
-        /vulnerab|CVE|prototype pollution|4\.17\.21|upgrade/i,
+        /4\.17\.20[^\n]*(safe|not vulnerable|vulnerable|affected)/i,
       );
+      expect(result).toMatch(/prototype pollution|4\.17\.21|fix|upgrade/i);
     },
   });
 

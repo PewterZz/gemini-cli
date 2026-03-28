@@ -29,14 +29,14 @@ describe('Context Awareness', () => {
   evalTest('USUALLY_PASSES', {
     name: 'should write TypeScript when project uses TypeScript',
     prompt:
-      'Create src/date-utils.ts with a formatIsoDate(date: Date): string helper. Follow the TypeScript ESM project config, not the legacy CommonJS files.',
+      'Create src/date-utils.ts with a formatIsoDate(date: Date): string helper. package.json says type=module, but tsconfig.json says CommonJS. Follow tsconfig.json for this TypeScript file.',
     files: {
       'tsconfig.json': JSON.stringify({
         compilerOptions: {
           strict: true,
           target: 'ES2022',
-          module: 'ESNext',
-          moduleResolution: 'Bundler',
+          module: 'CommonJS',
+          moduleResolution: 'Node',
         },
         include: ['src/**/*.ts'],
       }),
@@ -59,9 +59,13 @@ module.exports = { formatDateLegacy };
     assert: async (rig) => {
       const content = readFileOrFail(rig, 'src/date-utils.ts');
       expect(content).toContain('formatIsoDate');
-      expect(content).toMatch(/export\s+(function|const)/);
+      expect(content).not.toMatch(/export\s+default/);
       expect(content).not.toContain('require(');
-      expect(content).not.toContain('module.exports');
+
+      const usesCommonJsCompatibleExports =
+        content.includes('module.exports') ||
+        /export\s+(function|const|class|type|interface)\s+/.test(content);
+      expect(usesCommonJsCompatibleExports).toBe(true);
     },
   });
 
@@ -71,43 +75,27 @@ module.exports = { formatDateLegacy };
    */
   evalTest('USUALLY_PASSES', {
     name: 'should use ESM syntax when package.json has type module',
-    prompt: 'Create a new helper.js file with a capitalize function.',
+    prompt:
+      'Add src/public-asset-name.js with a toPublicAssetName helper similar to the helper in legacy.cjs.',
     files: {
       'package.json':
         '{"name": "esm-app", "type": "module", "version": "1.0.0"}',
-      'src/utils.js': `
-export function lower(s) { return s.toLowerCase(); }
+      'legacy.cjs': `
+const path = require('node:path');
+
+function toAssetName(input) {
+  return path.basename(String(input)).replace(/\s+/g, '-').toLowerCase();
+}
+
+module.exports = { toAssetName };
 `,
     },
     assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const writeCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'write_file',
-      );
-      expect(writeCalls.length).toBeGreaterThanOrEqual(1);
-
-      // Find the written file path from tool args
-      const writeCall = writeCalls[0];
-      if (writeCall) {
-        let args = writeCall.toolRequest.args;
-        if (typeof args === 'string') {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            /* skip */
-          }
-        }
-        const filePath =
-          typeof args === 'object' && args !== null
-            ? (args as Record<string, string>)['file_path']
-            : null;
-        if (filePath) {
-          const helperContent = readFileOrFail(rig, filePath);
-          // Should use export, not module.exports
-          expect(helperContent).toMatch(/export\s+(function|const|default)/);
-          expect(helperContent).not.toContain('module.exports');
-        }
-      }
+      const helperContent = readFileOrFail(rig, 'src/public-asset-name.js');
+      expect(helperContent).toMatch(/\bimport\s+/);
+      expect(helperContent).toMatch(/\bexport\s+(function|const|default)/);
+      expect(helperContent).not.toContain('require(');
+      expect(helperContent).not.toContain('module.exports');
     },
   });
 
@@ -118,28 +106,34 @@ export function lower(s) { return s.toLowerCase(); }
   evalTest('USUALLY_PASSES', {
     name: 'should follow project formatting conventions',
     prompt:
-      'Add a new multiply function to math.js following the existing code style.',
+      'Add a new multiply function and a getMultiplyLabel helper to math.js following the existing code style.',
     files: {
       'math.js': `
 function add(a, b) {
-    return a + b;
+\treturn a + b;
 }
 
 function subtract(a, b) {
-    return a - b;
+\treturn a - b;
 }
 
 module.exports = { add, subtract };
 `,
       '.editorconfig': `
 [*]
-indent_style = space
+indent_style = tab
 indent_size = 4
 `,
     },
     assert: async (rig) => {
       const content = readFileOrFail(rig, 'math.js');
       expect(content).toContain('multiply');
+      expect(content).toContain('getMultiplyLabel');
+      expect(content).toContain("'multiply'");
+      expect(content).toMatch(/function multiply\(a, b\) \{\n\t/);
+      expect(content).toMatch(
+        /function getMultiplyLabel\(\) \{\n\treturn 'multiply';/,
+      );
       // Existing functions should still be there
       expect(content).toContain('add');
       expect(content).toContain('subtract');

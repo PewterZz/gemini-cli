@@ -8,6 +8,9 @@ import { describe, expect } from 'vitest';
 import { evalTest, readFileOrFail } from './test-helper.js';
 import { EDIT_TOOL_NAMES } from '@google/gemini-cli-core';
 
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 describe('Multi-Turn Context', () => {
   /**
    * When asked to build on a previous change, the agent should read
@@ -15,14 +18,14 @@ describe('Multi-Turn Context', () => {
    */
   evalTest('USUALLY_PASSES', {
     name: 'should read current file state before making follow-up changes',
-    prompt:
-      'The file already has an add function. Now add a subtract function that follows the same pattern.',
+    prompt: 'Add an age-validation function to validators.ts and export it.',
     files: {
-      'math.ts': `
-// add was already implemented in the previous session
-export function add(a: number, b: number): number {
-  return a + b;
+      'validators.ts': `
+export function validateName(name: string): boolean {
+  return name.trim().length > 1;
 }
+
+export const version = '1.0.0';
 `,
     },
     assert: async (rig) => {
@@ -37,10 +40,47 @@ export function add(a: number, b: number): number {
         'Expected agent to read file before adding to it',
       ).toBeGreaterThanOrEqual(1);
 
-      // Should have added subtract without removing add
-      const content = readFileOrFail(rig, 'math.ts');
-      expect(content).toContain('subtract');
-      expect(content).toContain('add');
+      const contentAfterFirstTurn = readFileOrFail(rig, 'validators.ts');
+      const ageFunctionMatch =
+        contentAfterFirstTurn.match(
+          /export\s+function\s+([A-Za-z_$][\w$]*[Aa]ge[\w$]*)\s*\(/,
+        ) ||
+        contentAfterFirstTurn.match(
+          /function\s+([A-Za-z_$][\w$]*[Aa]ge[\w$]*)\s*\(/,
+        ) ||
+        contentAfterFirstTurn.match(
+          /export\s+const\s+([A-Za-z_$][\w$]*[Aa]ge[\w$]*)\s*=/,
+        ) ||
+        contentAfterFirstTurn.match(
+          /const\s+([A-Za-z_$][\w$]*[Aa]ge[\w$]*)\s*=/,
+        );
+      expect(
+        ageFunctionMatch,
+        'Expected first turn to add an age-related validator function',
+      ).toBeTruthy();
+      const ageFunctionName = ageFunctionMatch![1];
+
+      const toolLogCountBeforeFollowUp = toolLogs.length;
+      const followUpResult = await rig.run({
+        args: 'Follow-up: update the function you just added so non-number inputs return false. Then respond with FUNCTION=<name> using the exact function name you updated.',
+      });
+
+      const followUpToolLogs = rig
+        .readToolLogs()
+        .slice(toolLogCountBeforeFollowUp)
+        .filter(
+          (log) =>
+            log.toolRequest.name === 'read_file' ||
+            log.toolRequest.name === 'read_many_files',
+        );
+      expect(
+        followUpToolLogs.length,
+        'Expected the follow-up turn to re-read current file state',
+      ).toBeGreaterThanOrEqual(1);
+
+      expect(followUpResult).toMatch(
+        new RegExp(`FUNCTION\\s*=\\s*${escapeRegExp(ageFunctionName)}`),
+      );
     },
   });
 
@@ -96,26 +136,36 @@ export function updateUser(id: number, name: string, email: string) {
   evalTest('USUALLY_PASSES', {
     name: 'should revert to original code when asked to undo a change',
     prompt:
-      'The change to config.ts introduced a bug. Please revert it to use the hardcoded port 3000 again.',
+      'In config.ts, make two changes in order: first read port from process.env.PORT with fallback 3000, then increase requestTimeoutMs to 10000.',
     files: {
       'config.ts': `
-// This was changed from: export const port = 3000;
-// But the env var approach introduced a bug
-export const port = parseInt(process.env.PORT ?? '');  // BUG: NaN when PORT not set
+export const port = 3000;
+export const requestTimeoutMs = 5000;
+export const enableMetrics = false;
 `,
     },
     assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
+      const toolLogsAfterFirstTurn = rig.readToolLogs();
 
       // Must edit the file
-      const editCalls = toolLogs.filter((log) =>
+      const editCalls = toolLogsAfterFirstTurn.filter((log) =>
         EDIT_TOOL_NAMES.has(log.toolRequest.name),
       );
       expect(editCalls.length).toBeGreaterThanOrEqual(1);
 
-      // Should contain 3000 as a literal
-      const content = readFileOrFail(rig, 'config.ts');
-      expect(content).toContain('3000');
+      const contentAfterFirstTurn = readFileOrFail(rig, 'config.ts');
+      expect(contentAfterFirstTurn).toMatch(/process\.env\.PORT/);
+      expect(contentAfterFirstTurn).toContain('requestTimeoutMs');
+      expect(contentAfterFirstTurn).toContain('10000');
+
+      await rig.run({ args: 'Undo the LAST change only.' });
+
+      const contentAfterUndo = readFileOrFail(rig, 'config.ts');
+      expect(contentAfterUndo).toMatch(/process\.env\.PORT/);
+      expect(contentAfterUndo).toContain('3000');
+      expect(contentAfterUndo).toContain('requestTimeoutMs = 5000');
+      expect(contentAfterUndo).toContain('enableMetrics = false');
+      expect(contentAfterUndo).not.toContain('requestTimeoutMs = 10000');
     },
   });
 
