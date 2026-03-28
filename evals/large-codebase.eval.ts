@@ -40,13 +40,40 @@ export const dbConfig = {
 };
 `,
       ],
+      [
+        'src/config/userController.ts',
+        `
+export const userControllerConfig = {
+  connectionString: 'postgresql://localhost:5432/decoy_controller',
+  retries: 1,
+};
+`,
+      ],
+      [
+        'src/config/userModel.ts',
+        `
+export const userModelConfig = {
+  connectionString: 'postgresql://localhost:5432/decoy_model',
+  strict: true,
+};
+`,
+      ],
+      [
+        'src/config/userHelper.ts',
+        `
+export const userHelperConfig = {
+  connectionString: 'postgresql://localhost:5432/decoy_helper',
+  cache: true,
+};
+`,
+      ],
       ['src/config/app.ts', 'export const port = 3000;\n'],
       ['package.json', '{"name": "large-app", "type": "module"}'],
     ]),
-    assert: async (rig) => {
+    assert: async (rig, result) => {
       const toolLogs = rig.readToolLogs();
 
-      // Agent must use search tools -- should NOT read all 25+ files
+      // Agent must use search tools and avoid reading every file
       const readCalls = toolLogs.filter(
         (log) => log.toolRequest.name === 'read_file',
       );
@@ -56,13 +83,19 @@ export const dbConfig = {
           log.toolRequest.name === 'glob',
       );
 
-      // Either used search tools or read strategically (fewer than half the files)
-      const usedSearchOrStrategic =
-        searchCalls.length > 0 || readCalls.length < 10;
       expect(
-        usedSearchOrStrategic,
-        `Agent should search or read strategically, not read all ${readCalls.length} files`,
-      ).toBe(true);
+        searchCalls.length,
+        'Expected agent to use grep_search or glob to locate the right file',
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        readCalls.length,
+        `Expected strategic reading (<=3 files), but read ${readCalls.length}`,
+      ).toBeLessThanOrEqual(3);
+
+      expect(result).toContain('postgresql://localhost:5432/myapp');
+      expect(result).not.toContain('decoy_controller');
+      expect(result).not.toContain('decoy_model');
+      expect(result).not.toContain('decoy_helper');
     },
   });
 
@@ -73,14 +106,24 @@ export const dbConfig = {
   evalTest('USUALLY_PASSES', {
     name: 'should use grep to find all usages of a function across many files',
     prompt:
-      'Find all places in this codebase that call the authenticate() function.',
+      'Find all places in this codebase that call the authenticate() function. Return file paths only.',
     files: Object.fromEntries([
       ...Array.from({ length: 15 }, (_, i) => [
         `src/routes/route${i}.ts`,
-        i % 3 === 0
-          ? `import { authenticate } from '../auth.js';\nexport function handle${i}() { authenticate(token); }\n`
-          : `export function handle${i}() { return ${i}; }\n`,
+        `export function handle${i}() { return ${i}; }\n`,
       ]),
+      [
+        'src/routes/authenticatedRoute.ts',
+        'import { authenticate } from "../auth.js";\nexport function handleAuth(token: string) { return authenticate(token); }\n',
+      ],
+      [
+        'src/routes/adminRoute.ts',
+        'import { authenticate } from "../auth.js";\nexport function handleAdmin(token: string) { return authenticate(token); }\n',
+      ],
+      [
+        'src/routes/commentOnly.ts',
+        '// authenticate("legacy-token");\nexport function commentOnly() { return true; }\n',
+      ],
       [
         'src/auth.ts',
         'export function authenticate(token: string) { return !!token; }\n',
@@ -91,7 +134,7 @@ export const dbConfig = {
       ],
       ['package.json', '{"name": "app", "type": "module"}'],
     ]),
-    assert: async (rig) => {
+    assert: async (rig, result) => {
       const toolLogs = rig.readToolLogs();
       const grepCalls = toolLogs.filter(
         (log) => log.toolRequest.name === 'grep_search',
@@ -100,6 +143,11 @@ export const dbConfig = {
         grepCalls.length,
         'Expected agent to use grep_search to find function usages',
       ).toBeGreaterThanOrEqual(1);
+
+      expect(result).toContain('authenticatedRoute.ts');
+      expect(result).toContain('adminRoute.ts');
+      expect(result).toContain('middleware.ts');
+      expect(result).not.toContain('commentOnly.ts');
     },
   });
 
@@ -111,21 +159,32 @@ export const dbConfig = {
     name: 'should explore project structure before reading individual files',
     prompt: 'Give me an overview of how this project is structured.',
     files: Object.fromEntries([
-      ['src/api/users.ts', 'export const usersRouter = {};\n'],
-      ['src/api/orders.ts', 'export const ordersRouter = {};\n'],
-      ['src/services/payment.ts', 'export function processPayment() {}\n'],
-      ['src/services/email.ts', 'export function sendEmail() {}\n'],
+      ['src/api/routes/users.ts', 'export const usersRouter = {};\n'],
+      ['src/api/routes/orders.ts', 'export const ordersRouter = {};\n'],
+      ['src/core/services/payment.ts', 'export function processPayment() {}\n'],
+      ['src/core/services/email.ts', 'export function sendEmail() {}\n'],
       [
-        'src/models/user.ts',
+        'src/core/models/user.ts',
         'export interface User { id: number; name: string; }\n',
       ],
       [
-        'src/models/order.ts',
+        'src/core/models/order.ts',
         'export interface Order { id: number; total: number; }\n',
+      ],
+      [
+        'src/db/migrations/001_init.sql',
+        'CREATE TABLE users (id INT PRIMARY KEY, name TEXT);\n',
+      ],
+      [
+        'src/db/migrations/002_add_orders.sql',
+        'CREATE TABLE orders (id INT PRIMARY KEY, total INT);\n',
       ],
       ['src/utils/logger.ts', 'export const logger = console;\n'],
       ['src/utils/validator.ts', 'export function validate() {}\n'],
-      ['src/index.ts', 'import "./api/users.js"; import "./api/orders.js";\n'],
+      [
+        'src/index.ts',
+        'import "./api/routes/users.js"; import "./api/routes/orders.js";\n',
+      ],
       ['package.json', '{"name": "ecommerce-app", "type": "module"}'],
       ['README.md', '# E-commerce App\n'],
     ]),
@@ -142,6 +201,28 @@ export const dbConfig = {
         discoveryCalls.length,
         'Expected agent to explore directory structure before reading individual files',
       ).toBeGreaterThanOrEqual(1);
+
+      const firstDiscoveryIndex = toolLogs.findIndex(
+        (log) =>
+          log.toolRequest.name === 'list_directory' ||
+          log.toolRequest.name === 'glob',
+      );
+      const firstReadIndex = toolLogs.findIndex(
+        (log) =>
+          log.toolRequest.name === 'read_file' ||
+          log.toolRequest.name === 'read_many_files',
+      );
+
+      expect(
+        firstDiscoveryIndex,
+        'Expected at least one list_directory or glob call',
+      ).toBeGreaterThanOrEqual(0);
+      if (firstReadIndex >= 0) {
+        expect(
+          firstDiscoveryIndex,
+          'Expected structure exploration (ls/glob) before reading individual files',
+        ).toBeLessThan(firstReadIndex);
+      }
     },
   });
 
@@ -152,7 +233,7 @@ export const dbConfig = {
   evalTest('USUALLY_PASSES', {
     name: 'should check for all callers before modifying a shared utility',
     prompt:
-      'Rename the formatDate function to formatDateTime in utils.ts and update all callers.',
+      'Rename formatDate to formatDateTime(date: Date, includeTime: boolean) in utils.ts and update all callers.',
     files: {
       'src/utils.ts': `
 export function formatDate(date: Date): string {
@@ -169,6 +250,13 @@ export function generateReport(date: Date) {
 import { formatDate } from './utils.js';
 export function createInvoice(date: Date) {
   return { date: formatDate(date), total: 0 };
+}
+`,
+      'tests/utils.test.ts': `
+import { formatDate } from '../src/utils.js';
+
+export function formatsDateForTests(date: Date) {
+  return formatDate(date);
 }
 `,
       'package.json': '{"name": "app", "type": "module"}',
@@ -191,10 +279,19 @@ export function createInvoice(date: Date) {
       const utils = readFileOrFail(rig, 'src/utils.ts');
       const report = readFileOrFail(rig, 'src/report.ts');
       const invoice = readFileOrFail(rig, 'src/invoice.ts');
+      const testCaller = readFileOrFail(rig, 'tests/utils.test.ts');
 
       expect(utils).toContain('formatDateTime');
+      expect(utils).toContain('includeTime');
       expect(report).toContain('formatDateTime');
       expect(invoice).toContain('formatDateTime');
+      expect(testCaller).toContain('formatDateTime');
+
+      expect(report).not.toContain('{ formatDate }');
+      expect(testCaller).not.toContain('{ formatDate }');
+      expect(report).toMatch(/formatDateTime\([^,]+,\s*[^)]+\)/);
+      expect(invoice).toMatch(/formatDateTime\([^,]+,\s*[^)]+\)/);
+      expect(testCaller).toMatch(/formatDateTime\([^,]+,\s*[^)]+\)/);
     },
   });
 });

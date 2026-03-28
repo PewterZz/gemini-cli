@@ -15,16 +15,45 @@
 import { describe, expect } from 'vitest';
 import { evalTest, readFileOrFail } from './test-helper.js';
 
+const parseToolArgs = (rawArgs: unknown): Record<string, unknown> => {
+  if (typeof rawArgs !== 'string') {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(rawArgs) as unknown;
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+const normalizePath = (filePath: string): string => {
+  const srcPathIndex = filePath.indexOf('src/');
+  if (srcPathIndex >= 0) {
+    return filePath.slice(srcPathIndex);
+  }
+  const packagePathIndex = filePath.indexOf('packages/');
+  if (packagePathIndex >= 0) {
+    return filePath.slice(packagePathIndex);
+  }
+  return filePath;
+};
+
 describe('L3 Advanced', () => {
   evalTest('USUALLY_PASSES', {
     name: 'should find all callers before changing a function signature',
     prompt:
-      'The formatDate function currently takes a Date object. Change it to also accept a unix timestamp (number). Make sure all existing callers still work.',
+      'The formatDate function currently takes a Date object. Change it to take a unix timestamp (number) instead, and update all existing callers so they still work.',
     files: {
       'src/utils/date.ts': `
-export function formatDate(date: Date): string {
+function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
 }
+
+export default formatDate;
+export { formatDate };
 `,
       'src/reports/weekly.ts': `
 import { formatDate } from '../utils/date';
@@ -48,38 +77,76 @@ export function handleRequest(timestamp: number) {
   return { formatted: formatDate(date) };
 }
 `,
+      'packages/analytics/src/snapshot.ts': `
+import dateFormatter from '../../../src/utils/date';
+
+export function getSnapshotLabel(startDate: Date) {
+  return \`snapshot-\${dateFormatter(startDate)}\`;
+}
+`,
     },
     assert: async (rig) => {
       const toolLogs = rig.readToolLogs();
 
-      // Agent should have searched for callers
-      const searchCalls = toolLogs.filter(
+      const readCalls = toolLogs.filter(
         (log) =>
-          log.toolRequest.name === 'grep_search' ||
-          log.toolRequest.name === 'run_shell_command',
+          log.toolRequest.name === 'read_file' ||
+          log.toolRequest.name === 'read_many_files',
       );
+      const readFiles = new Set<string>();
+      for (const log of readCalls) {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        if (typeof filePath === 'string') {
+          readFiles.add(normalizePath(filePath));
+        }
+        const paths = args['paths'];
+        if (Array.isArray(paths)) {
+          for (const pathValue of paths) {
+            if (typeof pathValue === 'string') {
+              readFiles.add(normalizePath(pathValue));
+            }
+          }
+        }
+      }
       expect(
-        searchCalls.length,
-        'Expected agent to search for callers of formatDate',
-      ).toBeGreaterThanOrEqual(1);
+        readFiles.size,
+        'Expected agent to read at least 3 files before changing a signature',
+      ).toBeGreaterThanOrEqual(3);
 
-      // Agent should have modified date.ts
       const writeCalls = toolLogs.filter(
         (log) =>
           log.toolRequest.name === 'write_file' ||
           log.toolRequest.name === 'replace',
       );
+      const editedFiles = new Set<string>();
+      for (const log of writeCalls) {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        if (typeof filePath === 'string') {
+          editedFiles.add(normalizePath(filePath));
+        }
+      }
       expect(
-        writeCalls.length,
-        'Expected agent to make edits',
-      ).toBeGreaterThanOrEqual(1);
+        editedFiles.size,
+        'Expected agent to edit at least two files when changing signature',
+      ).toBeGreaterThanOrEqual(2);
 
-      // formatDate should now accept number | Date
+      // formatDate should now accept timestamp number and callers should be updated.
       const dateContent = readFileOrFail(rig, 'src/utils/date.ts');
       expect(
         dateContent.includes('number') || dateContent.includes('timestamp'),
-        'Expected formatDate to be updated to accept timestamps',
+        'Expected formatDate signature to be updated for timestamp usage',
       ).toBe(true);
+
+      const aliasedCaller = readFileOrFail(
+        rig,
+        'packages/analytics/src/snapshot.ts',
+      );
+      expect(
+        aliasedCaller,
+        'Expected aliased default-import caller to be updated for new signature',
+      ).toContain('getTime()');
     },
   });
   evalTest('USUALLY_PASSES', {
@@ -110,26 +177,61 @@ export async function getUserById(id: number): Promise<RawUser> {
   return { id, name: 'Alice', email: 'alice@example.com', created_at: '2024-01-01T00:00:00Z' };
 }
 `,
-      'src/services/user.ts': `
+      'src/repositories/user-repository.ts': `
 import { getUserById } from '../db/users';
+import { RawUser } from '../types';
+
+export async function fetchRawUser(id: number): Promise<RawUser> {
+  return getUserById(id);
+}
+`,
+      'src/services/user.ts': `
+import { fetchRawUser } from '../repositories/user-repository';
 import { UserRecord } from '../types';
 
 export async function getUser(id: number): Promise<UserRecord> {
-  return getUserById(id); // type error: RawUser != UserRecord
+  return fetchRawUser(id); // type error: RawUser != UserRecord
 }
 `,
     },
     assert: async (rig) => {
       const toolLogs = rig.readToolLogs();
 
-      // Agent should have read multiple files to trace the issue
-      const readCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'read_file',
+      const firstEditIndex = toolLogs.findIndex(
+        (log) =>
+          log.toolRequest.name === 'write_file' ||
+          log.toolRequest.name === 'replace',
       );
+      const preEditWindow =
+        firstEditIndex >= 0 ? firstEditIndex : toolLogs.length;
+      const readCalls = toolLogs
+        .map((log, index) => ({ log, index }))
+        .filter(
+          ({ log, index }) =>
+            index < preEditWindow &&
+            (log.toolRequest.name === 'read_file' ||
+              log.toolRequest.name === 'read_many_files'),
+        );
+      const uniqueReadFiles = new Set<string>();
+      for (const { log } of readCalls) {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        if (typeof filePath === 'string') {
+          uniqueReadFiles.add(normalizePath(filePath));
+        }
+        const paths = args['paths'];
+        if (Array.isArray(paths)) {
+          for (const pathValue of paths) {
+            if (typeof pathValue === 'string') {
+              uniqueReadFiles.add(normalizePath(pathValue));
+            }
+          }
+        }
+      }
       expect(
-        readCalls.length,
-        'Expected agent to read multiple files to trace the type mismatch',
-      ).toBeGreaterThanOrEqual(2);
+        uniqueReadFiles.size,
+        'Expected at least 3 different files to be read before any edit',
+      ).toBeGreaterThanOrEqual(3);
 
       // Agent should have written a fix
       const writeCalls = toolLogs.filter(
@@ -187,6 +289,10 @@ test('clamp returns min when below range', () => {
 test('sum returns correct total', () => {
   expect(sum([1, 2, 3])).toBe(6);
 });
+
+test.skip('red herring: intentionally failing and should stay skipped', () => {
+  expect(sum([1, 2, 3])).toBe(999);
+});
 `,
       'package.json': JSON.stringify({
         name: 'math-utils',
@@ -236,24 +342,59 @@ test('sum returns correct total', () => {
           mathContent.includes('i < array.length'),
         'Expected off-by-one bug to be fixed (i <= should become i <)',
       ).toBe(true);
+
+      const mathTestContent = readFileOrFail(rig, 'src/math.test.ts');
+      expect(
+        mathTestContent,
+        'Expected skipped red-herring test to remain skipped',
+      ).toContain(
+        "test.skip('red herring: intentionally failing and should stay skipped'",
+      );
     },
   });
   evalTest('USUALLY_PASSES', {
     name: 'should recover from a missing file by searching for the correct location',
-    prompt: 'Add a null check to the validateUser function in the auth module.',
+    prompt:
+      'Add a null check to the validateUser function in auth/user.ts in the auth module.',
     files: {
-      'src/auth/validator.ts': `
+      'src/auth/validators/user.ts': `
 export function validateUser(user: { name: string; email: string } | null): boolean {
   return user.name.length > 0 && user.email.includes('@');
 }
 `,
+      'src/auth/user.ts': `
+export const userEntity = { table: 'users' };
+`,
+      'src/auth/validator.ts': `
+export function validateToken(token: string): boolean {
+  return token.length > 0;
+}
+`,
+      'src/auth/validators/index.ts': `
+export const authValidators = ['token'];
+`,
+      'src/modules/auth/user.ts': `
+export function buildUserLabel(name: string): string {
+  return \`user:\${name}\`;
+}
+`,
       'src/index.ts': `
-export { validateUser } from './auth/validator';
+export { validateUser } from './auth/validators/user';
 `,
       'package.json': JSON.stringify({ name: 'auth-service' }),
     },
     assert: async (rig) => {
       const toolLogs = rig.readToolLogs();
+
+      const searchCalls = toolLogs.filter(
+        (log) =>
+          log.toolRequest.name === 'grep_search' ||
+          log.toolRequest.name === 'glob',
+      );
+      expect(
+        searchCalls.length,
+        'Expected agent to use search/glob to find validateUser in non-obvious path',
+      ).toBeGreaterThanOrEqual(1);
 
       // Agent should have written a fix
       const writeCalls = toolLogs.filter(
@@ -267,7 +408,10 @@ export { validateUser } from './auth/validator';
       ).toBeGreaterThanOrEqual(1);
 
       // The fix should add a null guard
-      const validatorContent = readFileOrFail(rig, 'src/auth/validator.ts');
+      const validatorContent = readFileOrFail(
+        rig,
+        'src/auth/validators/user.ts',
+      );
       expect(
         validatorContent.includes('null') ||
           validatorContent.includes('undefined') ||
