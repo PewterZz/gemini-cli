@@ -6,6 +6,78 @@
 
 import { describe, expect } from 'vitest';
 import { evalTest, readFileOrFail } from './test-helper.js';
+import path from 'node:path';
+
+const parseToolArgs = (rawArgs: unknown): Record<string, unknown> => {
+  if (typeof rawArgs !== 'string') {
+    return typeof rawArgs === 'object' && rawArgs !== null
+      ? (rawArgs as Record<string, unknown>)
+      : {};
+  }
+
+  try {
+    const parsed = JSON.parse(rawArgs) as unknown;
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+const pathMatches = (filePath: string, targetPath: string): boolean =>
+  filePath === targetPath || filePath.endsWith(`/${targetPath}`);
+
+const extractRelativeImports = (
+  filePath: string,
+  content: string,
+): string[] => {
+  const dirname = path.posix.dirname(filePath);
+  const dependencies = new Set<string>();
+  const requireRegex = /require\(['"](\.[^'"]+)['"]\)/g;
+  const importRegex = /from\s+['"](\.[^'"]+)['"]/g;
+
+  for (const regex of [requireRegex, importRegex]) {
+    let match = regex.exec(content);
+    while (match) {
+      const specifier = match[1] ?? '';
+      if (specifier) {
+        const normalized = path.posix.normalize(
+          path.posix.join(
+            dirname,
+            specifier.endsWith('.js') ? specifier : `${specifier}.js`,
+          ),
+        );
+        dependencies.add(normalized);
+      }
+      match = regex.exec(content);
+    }
+  }
+
+  return Array.from(dependencies);
+};
+
+const hasImportCycle = (graph: Record<string, string[]>): boolean => {
+  const visited = new Set<string>();
+  const active = new Set<string>();
+
+  const visit = (node: string): boolean => {
+    if (active.has(node)) return true;
+    if (visited.has(node)) return false;
+    visited.add(node);
+    active.add(node);
+
+    for (const neighbor of graph[node] ?? []) {
+      if (!(neighbor in graph)) continue;
+      if (visit(neighbor)) return true;
+    }
+
+    active.delete(node);
+    return false;
+  };
+
+  return Object.keys(graph).some((node) => visit(node));
+};
 
 describe('Multi-File Editing', () => {
   /**
@@ -15,7 +87,7 @@ describe('Multi-File Editing', () => {
   evalTest('USUALLY_PASSES', {
     name: 'should update all references when renaming a function',
     prompt:
-      'Rename the function "calculateTotal" to "computeTotal" across all files.',
+      'Rename pricing.calculateTotal to pricing.computeTotal across all pricing references. Do not rename cart.calculateTotal.',
     files: {
       'src/pricing.js': `
 function calculateTotal(items) {
@@ -24,15 +96,26 @@ function calculateTotal(items) {
 module.exports = { calculateTotal };
 `,
       'src/cart.js': `
-const { calculateTotal } = require('./pricing');
+const { calculateTotal: calculatePricingTotal } = require('./pricing');
+
+function calculateTotal(items) {
+  return items.reduce((sum, item) => sum + item.quantity, 0);
+}
 
 function getCartSummary(cart) {
   return {
-    itemCount: cart.items.length,
-    total: calculateTotal(cart.items),
+    itemCount: calculateTotal(cart.items),
+    total: calculatePricingTotal(cart.items),
   };
 }
-module.exports = { getCartSummary };
+module.exports = { getCartSummary, calculateTotal };
+`,
+      'src/cart-metrics.js': `
+function calculateTotal(carts) {
+  return carts.reduce((sum, cart) => sum + cart.items.length, 0);
+}
+
+module.exports = { calculateTotal };
 `,
       'test/pricing.test.js': `
 const { calculateTotal } = require('../src/pricing');
@@ -47,16 +130,22 @@ test('calculateTotal returns correct sum', () => {
       // All three files should be updated
       const pricing = readFileOrFail(rig, 'src/pricing.js');
       const cart = readFileOrFail(rig, 'src/cart.js');
+      const cartMetrics = readFileOrFail(rig, 'src/cart-metrics.js');
       const test = readFileOrFail(rig, 'test/pricing.test.js');
 
       expect(pricing).toContain('computeTotal');
-      expect(pricing).not.toContain('calculateTotal');
+      expect(pricing).not.toContain('function calculateTotal(');
 
       expect(cart).toContain('computeTotal');
-      expect(cart).not.toContain('calculateTotal');
+      expect(cart).toContain('function calculateTotal(items)');
+      expect(cart).toContain('itemCount: calculateTotal(cart.items)');
 
       expect(test).toContain('computeTotal');
-      expect(test).not.toContain('calculateTotal');
+      expect(test).not.toContain('const { calculateTotal }');
+      expect(test).not.toContain('expect(calculateTotal(items))');
+
+      expect(cartMetrics).toContain('function calculateTotal(carts)');
+      expect(cartMetrics).not.toContain('computeTotal');
     },
   });
 
@@ -103,40 +192,54 @@ module.exports = { parseCSV };
   evalTest('USUALLY_PASSES', {
     name: 'should add imports without disrupting existing ones',
     prompt:
-      'Add lodash as an import in app.js and use _.debounce to wrap the handleSearch function.',
+      'Use the existing formatCurrency helper when rendering totals in src/c.js. Update imports as needed, but avoid creating circular imports.',
     files: {
-      'app.js': `
-const express = require('express');
-const cors = require('cors');
-const { db } = require('./database');
+      'src/a.js': `
+const { renderCheckoutSummary } = require('./b');
 
-const app = express();
-app.use(cors());
-
-function handleSearch(query) {
-  return db.search(query);
+function formatCurrency(amount) {
+  return '$' + amount.toFixed(2);
 }
 
-app.get('/search', (req, res) => {
-  const results = handleSearch(req.query.q);
-  res.json(results);
-});
+function checkout(items) {
+  return renderCheckoutSummary(items);
+}
 
-module.exports = app;
+module.exports = { checkout, formatCurrency };
 `,
-      'package.json':
-        '{"name": "app", "dependencies": {"express": "^4.18.0", "cors": "^2.8.0", "lodash": "^4.17.0"}}',
+      'src/b.js': `
+const { summarizeItems } = require('./c');
+
+function renderCheckoutSummary(items) {
+  return summarizeItems(items);
+}
+
+module.exports = { renderCheckoutSummary };
+`,
+      'src/c.js': `
+function summarizeItems(items) {
+  const total = items.reduce((sum, item) => sum + item.price, 0);
+  return 'Total: ' + total;
+}
+
+module.exports = { summarizeItems };
+`,
     },
     assert: async (rig) => {
-      const content = readFileOrFail(rig, 'app.js');
-      // Lodash should be imported
-      expect(content).toContain('lodash');
-      // Existing imports should still be there
-      expect(content).toContain('express');
-      expect(content).toContain('cors');
-      expect(content).toContain('database');
-      // debounce should be used
-      expect(content).toContain('debounce');
+      const a = readFileOrFail(rig, 'src/a.js');
+      const b = readFileOrFail(rig, 'src/b.js');
+      const c = readFileOrFail(rig, 'src/c.js');
+      const graph = {
+        'src/a.js': extractRelativeImports('src/a.js', a),
+        'src/b.js': extractRelativeImports('src/b.js', b),
+        'src/c.js': extractRelativeImports('src/c.js', c),
+      };
+
+      expect(a).toContain("require('./b')");
+      expect(b).toContain("require('./c')");
+      expect(c).toMatch(/formatCurrency|formatter|formatValue/);
+      expect(graph['src/c.js']).not.toContain('src/a.js');
+      expect(hasImportCycle(graph)).toBe(false);
     },
   });
 
@@ -147,34 +250,84 @@ module.exports = app;
   evalTest('USUALLY_PASSES', {
     name: 'should move a function between files and update imports',
     prompt:
-      'Move the validateInput function from app.js to validation.js and update the import in app.js.',
+      'Move normalizeInput from helpers.ts to validation.ts and update app.ts imports. Do not modify helper.ts (singular).',
     files: {
-      'app.js': `
-function validateInput(input) {
+      'app.ts': `
+import { normalizeInput, processToken } from './helpers';
+
+export function processRequest(req: { body: { data: string } }) {
+  const clean = normalizeInput(req.body.data);
+  return { result: processToken(clean) };
+}
+`,
+      'helpers.ts': `
+export function normalizeInput(input: string) {
   if (!input || typeof input !== 'string') {
     throw new Error('Invalid input');
   }
   return input.trim();
 }
 
-function processRequest(req) {
-  const clean = validateInput(req.body.data);
-  return { result: clean.toUpperCase() };
+export function processToken(value: string) {
+  return value.toUpperCase();
 }
 
-module.exports = { processRequest };
+export const helperVersion = 'v1';
+`,
+      'helper.ts': `
+export function helperName() {
+  return 'do-not-touch-singular-file';
+}
+
+export const HELPER_MODE = 'singular';
 `,
     },
     assert: async (rig) => {
-      const app = readFileOrFail(rig, 'app.js');
-      // validateInput should be imported, not defined inline
-      expect(app).not.toMatch(/function validateInput/);
-      expect(app).toContain('validateInput');
+      const app = readFileOrFail(rig, 'app.ts');
+      const helpers = readFileOrFail(rig, 'helpers.ts');
+      const helperSingular = readFileOrFail(rig, 'helper.ts');
+      const validation = readFileOrFail(rig, 'validation.ts');
+      const toolLogs = rig.readToolLogs();
+
+      const changedFileCalls = toolLogs.filter((log) =>
+        ['replace', 'edit', 'write_file'].includes(log.toolRequest.name),
+      );
+      const touchedHelpersPlural = changedFileCalls.some((log) => {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        return (
+          typeof filePath === 'string' && pathMatches(filePath, 'helpers.ts')
+        );
+      });
+      const touchedHelperSingular = changedFileCalls.some((log) => {
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        return (
+          typeof filePath === 'string' && pathMatches(filePath, 'helper.ts')
+        );
+      });
+
+      expect(app).not.toMatch(/from ['"]\.\/helpers['"]/);
+      expect(app).toMatch(/from ['"]\.\/validation['"]/);
+      expect(app).toContain('normalizeInput');
       expect(app).toContain('processRequest');
 
-      // validation.js should exist with the function
-      const validation = readFileOrFail(rig, 'validation.js');
-      expect(validation).toContain('validateInput');
+      expect(helpers).not.toContain('function normalizeInput');
+      expect(helpers).toContain('processToken');
+
+      expect(validation).toContain('function normalizeInput');
+      expect(validation).toContain('export');
+
+      expect(helperSingular).toBe(`
+export function helperName() {
+  return 'do-not-touch-singular-file';
+}
+
+export const HELPER_MODE = 'singular';
+`);
+
+      expect(touchedHelpersPlural).toBe(true);
+      expect(touchedHelperSingular).toBe(false);
     },
   });
 });

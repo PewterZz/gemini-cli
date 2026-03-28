@@ -11,6 +11,8 @@ import {
   READ_MANY_FILES_TOOL_NAME,
   WRITE_FILE_TOOL_NAME,
   EDIT_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  WEB_FETCH_TOOL_NAME,
 } from '@google/gemini-cli-core';
 
 type ToolLog = {
@@ -26,6 +28,7 @@ const READ_TOOL_NAMES = new Set([
   READ_MANY_FILES_TOOL_NAME,
 ]);
 const EDIT_TOOL_NAMES = new Set([WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME]);
+const WEB_TOOL_NAMES = new Set([WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME]);
 
 const getTrackedLogs = (rig: { readToolLogs: () => ToolLog[] }): ToolLog[] =>
   rig.readToolLogs();
@@ -35,6 +38,9 @@ const getReadCalls = (logs: ToolLog[]) =>
 
 const getEditCalls = (logs: ToolLog[]) =>
   logs.filter((log) => EDIT_TOOL_NAMES.has(log.toolRequest.name));
+
+const getWebCalls = (logs: ToolLog[]) =>
+  logs.filter((log) => WEB_TOOL_NAMES.has(log.toolRequest.name));
 
 describe('Web Tools', () => {
   evalTest('USUALLY_PASSES', {
@@ -66,10 +72,15 @@ export async function loadOrders(baseUrl: string) {
     assert: async (rig, result) => {
       const logs = getTrackedLogs(rig);
       const readCalls = getReadCalls(logs);
+      const webCalls = getWebCalls(logs);
 
       expect(
         readCalls.length,
         'Expected local source inspection for fetch behavior',
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        webCalls.length,
+        'Expected web_search or web_fetch for fetch specification verification',
       ).toBeGreaterThanOrEqual(1);
       expect(result).toMatch(/fetch|network|reject|exception/i);
       expect(result).toMatch(
@@ -104,10 +115,15 @@ export function hashToken(token: string) {
       const logs = getTrackedLogs(rig);
       const readCalls = getReadCalls(logs);
       const editCalls = getEditCalls(logs);
+      const webCalls = getWebCalls(logs);
 
       expect(
         readCalls.length,
         'Expected local code inspection before migration guidance',
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        webCalls.length,
+        'Expected external deprecation lookup for crypto API migration guidance',
       ).toBeGreaterThanOrEqual(1);
       expect(result).toMatch(/createCipher|deprecated/i);
       expect(result).toMatch(/createCipheriv|migrate|key|iv|scrypt|pbkdf2/i);
@@ -115,40 +131,6 @@ export function hashToken(token: string) {
         editCalls.length,
         'This task is analysis-focused and should avoid broad rewrites',
       ).toBeLessThanOrEqual(3);
-    },
-  });
-
-  evalTest('USUALLY_PASSES', {
-    name: 'readme and nvmrc consistency check should surface version mismatch',
-    prompt:
-      'The README says to use npm install but the project has a .nvmrc. Are these instructions up to date?',
-    files: {
-      'README.md': `
-# Setup
-
-1. Install Node.js 14.x
-2. Run npm install
-3. Run npm test
-`,
-      '.nvmrc': '20.11.1\n',
-      'package.json': JSON.stringify({
-        name: 'nvm-mismatch',
-        engines: { node: '>=20' },
-        scripts: { test: 'vitest run' },
-      }),
-      'src/index.ts': 'export const ready = true;\n',
-    },
-    assert: async (rig, result) => {
-      const logs = getTrackedLogs(rig);
-      const readCalls = getReadCalls(logs);
-
-      expect(
-        readCalls.length,
-        'Expected inspection of at least README and runtime version signals',
-      ).toBeGreaterThanOrEqual(1);
-      expect(result).toMatch(
-        /14|20\.11\.1|engines|out of date|mismatch|update/i,
-      );
     },
   });
 
@@ -171,15 +153,62 @@ export function hashToken(token: string) {
     assert: async (rig, result) => {
       const logs = getTrackedLogs(rig);
       const readCalls = getReadCalls(logs);
+      const webCalls = getWebCalls(logs);
 
       expect(
         readCalls.length,
         'Expected local dependency inspection before vulnerability assessment',
       ).toBeGreaterThanOrEqual(1);
+      expect(
+        webCalls.length,
+        'Expected web_search or web_fetch for CVE/advisory lookup',
+      ).toBeGreaterThanOrEqual(1);
       expect(result).toMatch(/lodash|4\.17\.15/i);
       expect(result).toMatch(
         /vulnerab|CVE|prototype pollution|4\.17\.21|upgrade/i,
       );
+    },
+  });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'agent should identify when an npm package version has a known breaking change',
+    prompt:
+      'Check whether upgrading Express would break this code and explain any known breaking changes we should watch for.',
+    files: {
+      'package.json': JSON.stringify({
+        name: 'express-upgrade-check',
+        version: '1.0.0',
+        dependencies: {
+          express: '4.21.0',
+        },
+      }),
+      'src/server.js': `
+const express = require('express');
+
+const app = express();
+
+app.post('/orders', (req, res) => {
+  const orderId = req.body.orderId;
+  res.json({ orderId });
+});
+
+module.exports = { app };
+`,
+      'README.md':
+        'Server was originally written with older Express defaults.\n',
+    },
+    assert: async (rig, result) => {
+      const logs = getTrackedLogs(rig);
+      const readCalls = getReadCalls(logs);
+      const webCalls = getWebCalls(logs);
+
+      expect(readCalls.length).toBeGreaterThanOrEqual(1);
+      expect(
+        webCalls.length,
+        'Expected web_search or web_fetch for version-specific breaking-change verification',
+      ).toBeGreaterThanOrEqual(1);
+      expect(result).toMatch(/express|4\.21\.0|5(\.x)?|upgrade/i);
+      expect(result).toMatch(/body-parser|express\s*5|breaking change/i);
     },
   });
 });

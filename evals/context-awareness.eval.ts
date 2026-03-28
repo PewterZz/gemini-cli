@@ -28,64 +28,40 @@ describe('Context Awareness', () => {
    */
   evalTest('USUALLY_PASSES', {
     name: 'should write TypeScript when project uses TypeScript',
-    prompt: 'Create a new utility function that formats dates as ISO strings.',
+    prompt:
+      'Create src/date-utils.ts with a formatIsoDate(date: Date): string helper. Follow the TypeScript ESM project config, not the legacy CommonJS files.',
     files: {
-      'tsconfig.json':
-        '{"compilerOptions": {"strict": true, "target": "ES2020", "module": "commonjs"}}',
-      'src/utils.ts': `
-export function formatCurrency(amount: number): string {
-  return '$' + amount.toFixed(2);
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          target: 'ES2022',
+          module: 'ESNext',
+          moduleResolution: 'Bundler',
+        },
+        include: ['src/**/*.ts'],
+      }),
+      'src/legacy/date-utils.js': `
+const moment = require('moment');
+
+function formatDateLegacy(value) {
+  return moment(value).format('YYYY-MM-DD');
 }
+
+module.exports = { formatDateLegacy };
+`,
+      'src/legacy/index.js': `
+const { formatDateLegacy } = require('./date-utils');
+module.exports = { formatDateLegacy };
 `,
       'package.json':
-        '{"name": "ts-app", "devDependencies": {"typescript": "^5.0.0"}}',
+        '{"name": "ts-app", "type": "module", "scripts": {"build": "tsc --noEmit"}, "devDependencies": {"typescript": "^5.0.0"}}',
     },
     assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const writeCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'write_file',
-      );
-
-      // Check if any written file is .ts (not .js)
-      const wroteTs = writeCalls.some((call) => {
-        let args = call.toolRequest.args;
-        if (typeof args === 'string') {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            /* */
-          }
-        }
-        const filePath =
-          typeof args === 'object' && args !== null
-            ? ((args as Record<string, string>)['file_path'] ?? '')
-            : '';
-        return filePath.endsWith('.ts');
-      });
-
-      // Also check if they modified the existing .ts file
-      const modifiedTs = toolLogs.some((log) => {
-        if (log.toolRequest.name !== 'replace') return false;
-        let args = log.toolRequest.args;
-        if (typeof args === 'string') {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            return false;
-          }
-        }
-        if (typeof args !== 'object' || args === null) {
-          return false;
-        }
-        return (
-          ((args as Record<string, string>)['file_path'] ?? '') as string
-        ).endsWith('.ts');
-      });
-
-      expect(
-        wroteTs || modifiedTs,
-        'Expected agent to write TypeScript in a TypeScript project',
-      ).toBe(true);
+      const content = readFileOrFail(rig, 'src/date-utils.ts');
+      expect(content).toContain('formatIsoDate');
+      expect(content).toMatch(/export\s+(function|const)/);
+      expect(content).not.toContain('require(');
+      expect(content).not.toContain('module.exports');
     },
   });
 
@@ -176,7 +152,8 @@ indent_size = 4
    */
   evalTest('USUALLY_PASSES', {
     name: 'should use the correct test framework syntax',
-    prompt: 'Write a test for the greet function.',
+    prompt:
+      "Add one more test case for greet() that covers punctuation in names. Follow this repo's existing test framework.",
     files: {
       'src/greet.js': `
 function greet(name) {
@@ -185,40 +162,38 @@ function greet(name) {
 }
 module.exports = { greet };
 `,
+      'src/greet.test.js': `
+import { describe, it, expect } from 'vitest';
+import { greet } from './greet.js';
+
+describe('greet', () => {
+  it('greets a known user', () => {
+    expect(greet('Ada')).toBe('Hello, Ada!');
+  });
+});
+`,
       'package.json':
-        '{"devDependencies": {"jest": "^29.0.0"}, "scripts": {"test": "jest"}}',
+        '{"devDependencies": {"jest": "^29.0.0", "vitest": "^2.1.0"}, "scripts": {"test": "vitest run"}}',
       'jest.config.js': 'module.exports = { testEnvironment: "node" };',
     },
     assert: async (rig) => {
-      const toolLogs = rig.readToolLogs();
-      const writeCalls = toolLogs.filter(
-        (log) => log.toolRequest.name === 'write_file',
-      );
-      expect(writeCalls.length).toBeGreaterThanOrEqual(1);
-
-      // Find test file
-      const candidatePaths = [
-        'src/greet.test.js',
-        'test/greet.test.js',
-        '__tests__/greet.test.js',
-        'greet.test.js',
-      ];
+      const candidatePaths = ['src/greet.test.js', 'src/greet.spec.js'];
       const discoveredTestFile = candidatePaths
         .map((filePath) => ({ filePath, content: tryReadFile(rig, filePath) }))
         .find(({ content }) => content !== null);
 
-      expect(
-        discoveredTestFile,
-        `Expected generated test file at one of: ${candidatePaths.join(', ')}`,
-      ).toBeTruthy();
+      expect(discoveredTestFile).toBeTruthy();
 
       const testFile = discoveredTestFile?.content;
-
-      if (testFile) {
-        // Should use Jest syntax (expect/toBe), not Mocha (assert/chai)
-        expect(testFile).toMatch(/expect|toBe|toEqual|toContain/);
-        expect(testFile).toContain('greet');
+      if (!testFile) {
+        return;
       }
+
+      expect(testFile).toContain('describe');
+      expect(testFile).toContain('it(');
+      expect(testFile).toContain('greet');
+      expect(testFile).not.toMatch(/from ['"]@jest\/globals['"]/);
+      expect(testFile).not.toMatch(/\bjest\.(fn|spyOn|mock)\b/);
     },
   });
 
@@ -228,24 +203,34 @@ module.exports = { greet };
    */
   evalTest('USUALLY_PASSES', {
     name: 'should match existing semicolon convention',
-    prompt: 'Add a divide function to math.js.',
+    prompt:
+      'Inside createCalculator in math.js, add a divide function next to multiply and include it in the returned object. Match the surrounding indentation in that block.',
     files: {
       'math.js': `
-const add = (a, b) => a + b
-const subtract = (a, b) => a - b
+function createCalculator() {
+    function multiply(a, b) {
+        return a * b;
+    }
 
-module.exports = { add, subtract }
+  function add(a, b) {
+    return a + b;
+  }
+
+    return { multiply, add };
+}
+
+module.exports = { createCalculator };
 `,
     },
     assert: async (rig) => {
       const content = readFileOrFail(rig, 'math.js');
       expect(content).toContain('divide');
-      // Existing code has no semicolons, new code should match
-      // Count semicolons -- should be minimal (0 or very few)
-      const lines = content.split('\n').filter((l) => l.trim().length > 0);
-      const linesWithSemicolon = lines.filter((l) => l.trim().endsWith(';'));
-      // Allow some tolerance but most lines should not have semicolons
-      expect(linesWithSemicolon.length).toBeLessThan(lines.length / 2);
+      expect(content).toMatch(
+        /\n {4}function divide\(a, b\) \{\n {8}[^\n]+\n {4}\}/,
+      );
+      expect(content).not.toMatch(
+        /\n {2}function divide\(a, b\) \{\n {4}return a \/ b;\n {2}\}/,
+      );
     },
   });
 });

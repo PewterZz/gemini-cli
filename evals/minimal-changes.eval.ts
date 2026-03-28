@@ -7,6 +7,99 @@
 import { describe, expect } from 'vitest';
 import { evalTest, readFileOrFail } from './test-helper.js';
 
+const countLines = (content: string): number => content.split('\n').length;
+
+const getBlankLineNumbers = (content: string): number[] =>
+  content
+    .split('\n')
+    .map((line, index) => (line.trim().length === 0 ? index + 1 : null))
+    .filter((lineNumber): lineNumber is number => lineNumber !== null);
+
+const parseToolArgs = (rawArgs: unknown): Record<string, unknown> => {
+  if (typeof rawArgs !== 'string') {
+    return typeof rawArgs === 'object' && rawArgs !== null
+      ? (rawArgs as Record<string, unknown>)
+      : {};
+  }
+  try {
+    const parsed = JSON.parse(rawArgs) as unknown;
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+const pathMatches = (filePath: string, targetPath: string): boolean =>
+  filePath === targetPath || filePath.endsWith(`/${targetPath}`);
+
+const targetedListFixtureLines = Array.from({ length: 80 }, (_, index) => {
+  const lineNumber = index + 1;
+
+  if (lineNumber === 1) return '// @format: preserve';
+  if (lineNumber === 2) return '// Pagination utility';
+  if (lineNumber === 3) return '// Author: Original Developer';
+  if (lineNumber === 4) return '// Do not reformat this file';
+  if (lineNumber === 5) return '';
+  if (lineNumber === 28) return 'function paginate(items, page, perPage) {';
+  if (lineNumber === 29)
+    return '  const start = page * perPage; // BUG: should be (page - 1) * perPage';
+  if (lineNumber === 30) return '    const end = start + perPage;';
+  if (lineNumber === 31) return '  return items.slice(start, end);';
+  if (lineNumber === 32) return '}';
+  if (lineNumber === 33) return '';
+  if (lineNumber === 34) return '// Helper utilities';
+  if (lineNumber === 35) return 'function getPageCount(total, perPage) {';
+  if (lineNumber === 36) return '    return Math.ceil(total / perPage);';
+  if (lineNumber === 37) return '}';
+  if (lineNumber === 38) return '';
+  if (lineNumber === 39) return 'function validatePage(page, pageCount) {';
+  if (lineNumber === 40) return '  if (pageCount === 0) {';
+  if (lineNumber === 41) return '    return false;';
+  if (lineNumber === 42) return '  }';
+  if (lineNumber === 43) return '    return page >= 1 && page <= pageCount;';
+  if (lineNumber === 44) return '}';
+  if (lineNumber === 45) return '';
+  if (lineNumber === 80)
+    return 'module.exports = { paginate, getPageCount, validatePage };';
+
+  return `const listLine${lineNumber} = 'line-${lineNumber}';`;
+});
+
+const targetedListFixture = targetedListFixtureLines.join('\n');
+
+const lockProtectedMathFixtureLines = [
+  '/**',
+  ' * Math utilities',
+  ' * Tested and stable - do not modify existing functions',
+  ' */',
+  'function add(a, b) {',
+  '  return a + b;',
+  '}',
+  '',
+  'function subtract(a, b) {',
+  '  return a - b;',
+  '}',
+  '',
+  'function padTicketNumber(value, width = 6) {',
+  '  // space padding by design',
+  "  return String(value).padStart(width, ' ');",
+  '}',
+  '',
+  'module.exports = { add, subtract, padTicketNumber };',
+  '',
+  '/* LOCK: do not modify below this line */',
+  "const LOCK_A = 'alpha';",
+  "const LOCK_B = 'beta';",
+  "const LOCK_C = 'gamma';",
+  "const LOCK_D = 'delta';",
+  "const LOCK_E = 'epsilon';",
+];
+
+const lockProtectedMathFixture = lockProtectedMathFixtureLines.join('\n');
+const lockedTailBlock = lockProtectedMathFixtureLines.slice(20, 25).join('\n');
+
 const configTypoFixtureLines = Array.from({ length: 80 }, (_, index) => {
   const lineNumber = index + 1;
 
@@ -38,34 +131,39 @@ describe('Minimal Changes', () => {
     prompt:
       'Fix the off-by-one error in the paginate function in list.js. Only change what is necessary.',
     files: {
-      'list.js': `// @format: preserve
-// Pagination utility
-// Author: Original Developer
-// Do not reformat this file
-
-function paginate(items, page, perPage) {
-  const start = page * perPage; // BUG: should be (page - 1) * perPage
-    const end = start + perPage;
-  return items.slice(start, end);
-}
-
-// Helper utilities
-function getPageCount(total, perPage) {
-    return Math.ceil(total / perPage);
-}
-
-function validatePage(page, pageCount) {
-  if (pageCount === 0) {
-    return false;
-  }
-    return page >= 1 && page <= pageCount;
-}
-
-module.exports = { paginate, getPageCount, validatePage };
-`,
+      'list.js': targetedListFixture,
     },
     assert: async (rig) => {
       const content = readFileOrFail(rig, 'list.js');
+      const originalLineCount = countLines(targetedListFixture);
+      const finalLineCount = countLines(content);
+      const originalBlankLines = new Set(
+        getBlankLineNumbers(targetedListFixture),
+      );
+      const finalBlankLines = getBlankLineNumbers(content);
+      const addedBlankLines = finalBlankLines.filter(
+        (lineNumber) => !originalBlankLines.has(lineNumber),
+      );
+      const allowedAddedBlankLines = new Set([29]);
+
+      expect(originalLineCount).toBe(80);
+      expect(finalLineCount).toBe(originalLineCount);
+      expect(finalLineCount).toBe(80);
+
+      expect(
+        addedBlankLines.every((lineNumber) =>
+          allowedAddedBlankLines.has(lineNumber),
+        ),
+        `Unexpected new blank lines outside bug-fix location: ${addedBlankLines.join(', ')}`,
+      ).toBe(true);
+
+      for (const blankLineNumber of originalBlankLines) {
+        const line = content.split('\n')[blankLineNumber - 1] ?? '';
+        expect(
+          line.trim(),
+          `Blank line ${blankLineNumber} must remain blank`,
+        ).toBe('');
+      }
 
       // The bug should be fixed
       expect(content).toContain('const start = (page - 1) * perPage;');
@@ -96,33 +194,31 @@ module.exports = { paginate, getPageCount, validatePage };
   evalTest('USUALLY_PASSES', {
     name: 'should not rewrite unrelated code when adding a small feature',
     prompt:
-      'Add a multiply function to math.js. Do not change the existing functions.',
+      'Add a multiply function to math.js directly above the LOCK section. Do not change existing functions or anything below the LOCK comment.',
     files: {
-      'math.js': `/**
- * Math utilities
- * Tested and stable - do not modify existing functions
- */
-function add(a, b) {
-  return a + b;
-}
-
-function subtract(a, b) {
-  return a - b;
-}
-
-function padTicketNumber(value, width = 6) {
-  // space padding by design
-  return String(value).padStart(width, ' ');
-}
-
-module.exports = { add, subtract, padTicketNumber };
-`,
+      'math.js': lockProtectedMathFixture,
     },
     assert: async (rig) => {
       const content = readFileOrFail(rig, 'math.js');
+      const lines = content.split('\n');
+      const lockLineIndex = lines.findIndex(
+        (line) => line === '/* LOCK: do not modify below this line */',
+      );
+      const lockedTail = lines
+        .slice(lockLineIndex + 1, lockLineIndex + 6)
+        .join('\n');
 
       // New function added
       expect(content).toContain('multiply');
+
+      expect(countLines(lockProtectedMathFixture)).toBe(25);
+      expect(lines.length).toBeGreaterThanOrEqual(32);
+      expect(lines.length).toBeLessThanOrEqual(35);
+      expect(
+        lockLineIndex,
+        'LOCK section comment should remain present',
+      ).toBeGreaterThanOrEqual(0);
+      expect(lockedTail).toBe(lockedTailBlock);
 
       // Existing functions untouched
       expect(content).toContain('function add(a, b)');
@@ -131,6 +227,45 @@ module.exports = { add, subtract, padTicketNumber };
 
       // Comment preserved
       expect(content).toContain('do not modify existing functions');
+    },
+  });
+
+  /**
+   * When fixing a typo in an existing file, the agent should use targeted edits
+   * and avoid full-file overwrite with write_file.
+   */
+  evalTest('USUALLY_PASSES', {
+    name: 'should use edit not write_file when modifying existing files',
+    prompt:
+      'Fix the typo on line 30 of handbook.js: change "adress" to "address" and do not modify any other lines.',
+    files: {
+      'handbook.js': Array.from({ length: 60 }, (_, index) => {
+        const lineNumber = index + 1;
+        if (lineNumber === 1) return "const docName = 'team-handbook';";
+        if (lineNumber === 30)
+          return '// Please confirm the shipping adress before dispatch.';
+        if (lineNumber === 60) return 'module.exports = { docName };';
+        return `const handbookLine${lineNumber} = 'line-${lineNumber}';`;
+      }).join('\n'),
+    },
+    assert: async (rig) => {
+      const content = readFileOrFail(rig, 'handbook.js');
+      const toolLogs = rig.readToolLogs();
+      const writeFileCallsToHandbook = toolLogs.filter((log) => {
+        if (log.toolRequest.name !== 'write_file') {
+          return false;
+        }
+        const args = parseToolArgs(log.toolRequest.args);
+        const filePath = args['file_path'];
+        return (
+          typeof filePath === 'string' && pathMatches(filePath, 'handbook.js')
+        );
+      });
+
+      expect(writeFileCallsToHandbook.length).toBe(0);
+      expect(content).toContain('shipping address before dispatch');
+      expect(content).not.toContain('shipping adress before dispatch');
+      expect(countLines(content)).toBe(60);
     },
   });
 
