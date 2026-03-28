@@ -128,4 +128,63 @@ module.exports = { parseCSV };
       expect(content).toContain('parseCSV');
     },
   });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'should suggest worker threads for CPU-bound image processing',
+    prompt:
+      'The image processing endpoint blocks other requests for 30 seconds. Fix it.',
+    files: {
+      'src/imageProcessor.ts': `
+type Job = { id: string; pixels: number[] };
+
+function cpuHeavyTransform(job: Job): number {
+  let checksum = 0;
+  for (let i = 0; i < 4_000_000; i++) {
+    checksum += (job.pixels[i % job.pixels.length] || 0) ^ (i % 97);
+  }
+  return checksum;
+}
+
+export function processQueue(queue: Job[]) {
+  const output: Array<{ id: string; checksum: number }> = [];
+  for (let i = 0; i < 100; i++) {
+    for (const job of queue) {
+      output.push({ id: job.id + '-' + i, checksum: cpuHeavyTransform(job) });
+    }
+  }
+  return output;
+}
+`,
+      'src/routes/images.ts': `
+import { processQueue } from '../imageProcessor.js';
+
+export function processImagesRoute(req: { body: { jobs: Array<{ id: string; pixels: number[] }> } }, res: { json: (body: unknown) => void }) {
+  const result = processQueue(req.body.jobs);
+  res.json({ count: result.length });
+}
+`,
+      'src/server.ts':
+        'export { processImagesRoute } from "./routes/images.js";\n',
+    },
+    assert: async (rig, result) => {
+      const toolLogs = rig.readToolLogs();
+      const inspectedProcessor = toolLogs.some((log) =>
+        log.toolRequest.args.includes('imageProcessor.ts'),
+      );
+      const inspectedRoute = toolLogs.some((log) =>
+        log.toolRequest.args.includes('routes/images.ts'),
+      );
+
+      expect(
+        inspectedProcessor && inspectedRoute,
+        'Expected diagnosis to inspect both CPU-heavy processor and route usage',
+      ).toBe(true);
+      expect(result).toMatch(/worker|thread|cluster/i);
+      expect(result).toMatch(/event loop|non[- ]blocking|blocking/i);
+
+      const content = readFileOrFail(rig, 'src/imageProcessor.ts');
+      expect(content).toContain('processQueue');
+      expect(content).toMatch(/worker|thread|cluster|worker_threads/i);
+    },
+  });
 });

@@ -266,4 +266,62 @@ export function cacheSize() {
       ).toBeLessThanOrEqual(4);
     },
   });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'should diagnose why tests pass locally but fail in CI with environment differences',
+    prompt:
+      'Tests pass locally but fail in CI with connection refused. Help me understand why.',
+    files: {
+      'tests/db.integration.test.ts': `
+import { connect } from '../src/db.js';
+
+export async function runDbTest() {
+  const client = await connect();
+  return client.ping();
+}
+`,
+      '.env.local':
+        'DB_URL=postgres://localhost:5432/app_local\nAPI_KEY=local-key\n',
+      '.env.ci': 'API_KEY=ci-key\nNODE_ENV=test\n',
+      'src/db.ts': `
+type Client = { ping: () => string; url: string };
+
+export async function connect(): Promise<Client> {
+  const url = process.env['DB_URL'];
+  if (!url) {
+    throw new Error('connection refused: missing DB_URL');
+  }
+  return {
+    url,
+    ping: () => 'ok',
+  };
+}
+`,
+      'README.md':
+        '# Testing\nLocal tests load .env.local and CI loads .env.ci.\n',
+    },
+    assert: async (rig, result) => {
+      const logs = getTrackedLogs(rig);
+      const readCalls = getReadLikeCalls(logs);
+
+      const readTestFile = readCalls.some((log) =>
+        log.toolRequest.args.includes('tests/db.integration.test.ts'),
+      );
+      const readDbConfig = readCalls.some((log) =>
+        log.toolRequest.args.includes('src/db.ts'),
+      );
+      const readCiEnv = readCalls.some((log) =>
+        log.toolRequest.args.includes('.env.ci'),
+      );
+
+      expect(
+        readTestFile && readDbConfig && readCiEnv,
+        'Expected tracing from failing test to src/db.ts and CI environment file',
+      ).toBe(true);
+      expect(result).toMatch(/DB_URL|connection string|database url/i);
+      expect(result).toMatch(
+        /ci|local|missing|unset|fallback|connection refused/i,
+      );
+    },
+  });
 });

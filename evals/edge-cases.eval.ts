@@ -159,4 +159,31 @@ module.exports = { greet, divide };
       expect(readCalls.length).toBeGreaterThanOrEqual(1);
     },
   });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'should handle a file that looks like JSON but has trailing comments',
+    prompt:
+      'Update config.jsonc by adding a top-level "telemetryEnabled": true setting while keeping existing comments intact.',
+    files: {
+      'config.jsonc': `{
+  // Workspace defaults used by editors
+  "editor.tabSize": 2,
+  "editor.formatOnSave": true, // Keep this inline note
+  "files.autoSave": "off" // Keep this trailing comment too
+}
+`,
+      'README.md':
+        '# Config\nThis project stores editor preferences in JSONC format.\n',
+    },
+    assert: async (rig) => {
+      const content = readFileOrFail(rig, 'config.jsonc');
+
+      expect(content).toContain('// Workspace defaults used by editors');
+      expect(content).toContain('// Keep this inline note');
+      expect(content).toContain('// Keep this trailing comment too');
+      expect(content).toMatch(/"telemetryEnabled"\s*:\s*true/);
+      expect(content).toMatch(/"editor\.tabSize"\s*:\s*2/);
+      expect(content).toMatch(/"files\.autoSave"\s*:\s*"off"/);
+    },
+  });
 });

@@ -241,4 +241,117 @@ describe('config', () => {
       ).toBeGreaterThanOrEqual(1);
     },
   });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'should trace async race condition across Promise chain',
+    prompt:
+      'Users see stale data after updates. The logs show saveActivity completes before processUser sometimes. Find and fix the race condition.',
+    files: {
+      'src/db.ts': `
+export type UserRecord = { id: string; name: string; version: number };
+
+const users = new Map<string, UserRecord>([['u1', { id: 'u1', name: 'Asha', version: 1 }]]);
+
+export const db = {
+  async getUser(userId: string): Promise<UserRecord> {
+    return users.get(userId) ?? { id: userId, name: 'unknown', version: 0 };
+  },
+  async updateUser(userId: string, next: UserRecord): Promise<void> {
+    users.set(userId, next);
+  },
+  async insertActivity(input: { userId: string; snapshotVersion: number; event: string }): Promise<void> {
+    void input;
+  },
+};
+`,
+      'src/fetchUser.ts': `
+import { db } from './db.js';
+
+export async function fetchUser(userId: string) {
+  return db.getUser(userId);
+}
+`,
+      'src/saveActivity.ts': `
+import { fetchUser } from './fetchUser.js';
+import { db } from './db.js';
+
+export async function saveActivity(userId: string, event: string) {
+  const snapshot = await fetchUser(userId);
+  await db.insertActivity({
+    userId,
+    snapshotVersion: snapshot.version,
+    event,
+  });
+}
+`,
+      'src/processUser.ts': `
+import { fetchUser } from './fetchUser.js';
+import { db } from './db.js';
+import { saveActivity } from './saveActivity.js';
+
+export async function processUser(userId: string, newName: string) {
+  const current = await fetchUser(userId);
+  const next = {
+    ...current,
+    name: newName,
+    version: current.version + 1,
+  };
+
+  const updatePromise = db.updateUser(userId, next);
+  saveActivity(userId, 'user-updated'); // race condition: saveActivity may read stale user before update settles
+  await updatePromise;
+
+  return next;
+}
+`,
+      'src/index.ts':
+        'export { processUser } from "./processUser.js";\nexport { saveActivity } from "./saveActivity.js";\n',
+    },
+    assert: async (rig) => {
+      const logs = getTrackedLogs(rig);
+      const readCalls = getReadCalls(logs);
+      const editCalls = getEditCalls(logs);
+
+      const readFetchUser = readCalls.some((log) =>
+        log.toolRequest.args.includes('fetchUser.ts'),
+      );
+      const readProcessUser = readCalls.some((log) =>
+        log.toolRequest.args.includes('processUser.ts'),
+      );
+      const readSaveActivity = readCalls.some((log) =>
+        log.toolRequest.args.includes('saveActivity.ts'),
+      );
+
+      const editedRaceFlow = editCalls.some((log) =>
+        /processUser\.ts|saveActivity\.ts/i.test(log.toolRequest.args),
+      );
+      const processUserContent = readFileWithGuard(
+        rig,
+        'src/processUser.ts',
+        'Async race condition fix verification',
+      );
+
+      expect(
+        readFetchUser && readProcessUser && readSaveActivity,
+        'Expected tracing across fetchUser, processUser, and saveActivity before fixing race condition',
+      ).toBe(true);
+      expect(
+        editedRaceFlow,
+        'Expected edits in processUser.ts or saveActivity.ts to resolve race',
+      ).toBe(true);
+      expect(processUserContent).toMatch(/Promise\.all|await\s+saveActivity/);
+      expect(processUserContent).not.toMatch(
+        /race condition: saveActivity may read stale user before update settles/i,
+      );
+
+      if (
+        processUserContent.includes('await saveActivity') &&
+        !processUserContent.includes('Promise.all')
+      ) {
+        expect(processUserContent).toMatch(
+          /await\s+updatePromise[\s\S]{0,220}await\s+saveActivity/,
+        );
+      }
+    },
+  });
 });

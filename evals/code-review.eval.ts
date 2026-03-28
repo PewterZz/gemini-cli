@@ -282,4 +282,61 @@ export function preview(sortField: string, direction: 'asc' | 'desc', prefs: Rec
       expect(result).toMatch(/sql injection|prototype pollution/i);
     },
   });
+
+  evalTest('USUALLY_PASSES', {
+    name: 'review should catch N+1 query hidden behind a helper function',
+    prompt: 'Review the user list endpoint for performance issues.',
+    files: {
+      'userService.ts': `
+import { getUser } from './helpers.js';
+
+export async function buildUserList(ids: string[]) {
+  const users = [];
+  for (const id of ids) {
+    users.push(await getUser(id));
+  }
+  return users;
+}
+`,
+      'helpers.ts': `
+const db = {
+  async query(sql: string, values: unknown[]) {
+    return { id: values[0], name: 'user-' + values[0], sql };
+  },
+};
+
+export async function getUser(id: string) {
+  return db.query('SELECT id, name FROM users WHERE id = $1', [id]);
+}
+`,
+      'routes/users.ts': `
+import { buildUserList } from '../userService.js';
+
+export async function usersRoute() {
+  return buildUserList(['u1', 'u2', 'u3', 'u4']);
+}
+`,
+    },
+    assert: async (rig, result) => {
+      const readCalls = getReadCalls(getTrackedLogs(rig));
+      const readUserService = readCalls.some((log) =>
+        log.toolRequest.args.includes('userService.ts'),
+      );
+      const readHelpers = readCalls.some((log) =>
+        log.toolRequest.args.includes('helpers.ts'),
+      );
+
+      expect(
+        readUserService,
+        'Expected review to inspect userService.ts loop logic',
+      ).toBe(true);
+      expect(
+        readHelpers,
+        'Expected review to inspect helpers.ts where DB call is hidden',
+      ).toBe(true);
+      expect(result).toMatch(
+        /n\+1|batch|batching|batched|single query|\bin\s*\(/i,
+      );
+    },
+  });
 });
