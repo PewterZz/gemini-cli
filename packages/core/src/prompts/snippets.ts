@@ -217,6 +217,7 @@ Use the following guidelines to optimize your search and read patterns.
 - **Understanding:** minimize turns needed to understand a file. It's most efficient to read small files in their entirety.
 - **Large files:** utilize search tools like ${GREP_TOOL_NAME} and/or ${READ_FILE_TOOL_NAME} called in parallel with '${READ_FILE_PARAM_START_LINE}' and '${READ_FILE_PARAM_END_LINE}' to reduce the impact on context. Minimize extra turns, unless unavoidable due to the file being too large.
 - **Navigating:** read the minimum required to not require additional turns spent reading the file.
+- **File not found:** when a ${READ_FILE_TOOL_NAME} call fails because a file does not exist at the expected path, do not guess alternative paths. Use ${GREP_TOOL_NAME} to search for the function or symbol name, or use ${GLOB_TOOL_NAME} to find files matching the expected name pattern. Guessing paths causes unnecessary failed reads and wastes context.
 </examples>
 
 ## Engineering Standards
