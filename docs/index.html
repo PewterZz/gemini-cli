@@ -8,6 +8,7 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background: #0d1117;
+    margin-top: 0;
     color: #e6edf3;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     font-size: 15px;
@@ -23,7 +24,7 @@
     border-radius: 4px;
   }
 
-  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 32px; }
 
   nav {
     border-bottom: 1px solid #21262d;
@@ -39,10 +40,6 @@
   .hero .meta a { color: #8b949e; }
   .hero .meta a:hover { color: #58a6ff; }
 
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 28px 0; border-bottom: 1px solid #21262d; }
-  .stat { border: 1px solid #21262d; border-radius: 6px; padding: 16px; }
-.stat .num { font-size: 2rem; font-weight: 700; color: #e6edf3; }
-  .stat .label { font-size: 0.8rem; color: #8b949e; margin-top: 2px; }
 
   section { padding: 32px 0; border-bottom: 1px solid #21262d; }
   section:last-child { border-bottom: none; }
@@ -129,10 +126,7 @@
     </p>
   </div>
 
-  <div class="stats">
-    <div class="stat">
-      <div class="num">77</div>
-      <div class="label">evals written, 16 categories</div>
+<div class="label">evals written, 16 categories</div>
     </div>
     <div class="stat">
       <div class="num">5</div>
@@ -251,6 +245,41 @@
   </section>
 
 </div>
+
+    <section>
+    <h2>Agent Tool Logs</h2>
+    <p style="font-size:0.875rem;color:#8b949e;margin-bottom:16px">Each eval captures the agent's full tool call sequence. These are the raw <code>toolRequest</code> arrays from the test rig — what the agent actually did, not what it was asked to do. Two examples below; full logs in <a href="https://github.com/PewterZz/gemini-cli/tree/feat/eval-coverage-tooling/evals/logs">evals/logs/</a>.</p>
+
+    <details>
+      <summary><span>should_use_grep_over_reading_all_files_for_string_search — PASS</span></summary>
+      <pre class="json">[
+  {
+    "toolRequest": {
+      "name": "grep_search",
+      "args": "{ \"pattern\": \"TODO\" }",
+      "success": true,
+      "duration_ms": 881
+    }
+  }
+]</pre>
+      <div class="detail-body" style="color:#8b949e;font-size:0.82rem">Agent used <code>grep_search</code> directly. Assertion: no <code>read_file</code> calls before the grep. Pass.</div>
+    </details>
+
+    <details>
+      <summary><span>retry_logic_should_be_extracted_into_shared_utility_used_by_both_clients — PASS</span></summary>
+      <pre class="json">[
+  { "toolRequest": { "name": "read_file",         "args": "{ \"file_path\": \"src/apiClient.ts\" }",  "success": true, "duration_ms": 11 } },
+  { "toolRequest": { "name": "read_file",         "args": "{ \"file_path\": \"src/httpClient.ts\" }", "success": true, "duration_ms": 11 } },
+  { "toolRequest": { "name": "read_file",         "args": "{ \"file_path\": \"src/index.ts\" }",      "success": true, "duration_ms": 8  } },
+  { "toolRequest": { "name": "run_shell_command", "args": "{ \"command\": \"cat package.json\" }",    "success": true, "duration_ms": 48 } },
+  { "toolRequest": { "name": "write_file",        "args": "{ \"file_path\": \"src/retry.ts\" }",      "success": true, "duration_ms": 12 } },
+  { "toolRequest": { "name": "edit_file",         "args": "{ \"file_path\": \"src/apiClient.ts\" }",  "success": true, "duration_ms": 9  } },
+  { "toolRequest": { "name": "edit_file",         "args": "{ \"file_path\": \"src/httpClient.ts\" }", "success": true, "duration_ms": 8  } }
+]</pre>
+      <div class="detail-body" style="color:#8b949e;font-size:0.82rem">Agent reads both clients, creates a shared <code>retry.ts</code>, then edits both clients to use it. Assertion: write_file called exactly once with a new shared utility file. Pass.</div>
+    </details>
+
+  </section>
 
   <section>
     <h2>Raw Result Files</h2>
