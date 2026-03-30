@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GSoC 2026 — Gemini CLI Behavioral Evals</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 24px 0; }
+  .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  .header h1 { font-size: 1.4rem; font-weight: 600; }
+  .header p { color: var(--muted); margin-top: 4px; font-size: 0.9rem; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; margin-right: 6px; }
+  .badge-blue { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); }
+  .badge-green { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+
+  .main { padding: 32px 0; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+  .card h3 { font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .card .big { font-size: 2.2rem; font-weight: 700; }
+  .card .sub { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+
+  .section { margin: 40px 0; }
+  .section h2 { font-size: 1.1rem; font-weight: 600; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  th { text-align: left; padding: 8px 12px; background: var(--surface); border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .pct { font-weight: 600; }
+  .pct-high { color: var(--green); }
+  .pct-mid { color: var(--yellow); }
+  .pct-low { color: var(--red); }
+
+  .gen3 { background: rgba(63,185,80,0.06); }
+
+  .finding { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: 16px; margin: 12px 0; }
+  .finding h4 { font-size: 0.9rem; margin-bottom: 6px; }
+  .finding p { font-size: 0.85rem; color: var(--muted); }
+  .finding code { background: rgba(255,255,255,0.08); padding: 2px 5px; border-radius: 3px; font-family: monospace; font-size: 0.8rem; color: var(--text); }
+
+  .artifact { display: flex; align-items: flex-start; gap: 12px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin: 10px 0; }
+  .artifact-icon { font-size: 1.4rem; flex-shrink: 0; }
+  .artifact h4 { font-size: 0.9rem; margin-bottom: 4px; }
+  .artifact p { font-size: 0.82rem; color: var(--muted); }
+
+  .pr-list { list-style: none; }
+  .pr-list li { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.875rem; display: flex; gap: 10px; }
+  .pr-list li:last-child { border-bottom: none; }
+  .pr-type { font-size: 0.75rem; padding: 2px 6px; border-radius: 3px; flex-shrink: 0; align-self: center; font-weight: 600; }
+  .pr-eval { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .pr-fix { background: rgba(63,185,80,0.15); color: var(--green); }
+
+  .footer { border-top: 1px solid var(--border); padding: 24px 0; color: var(--muted); font-size: 0.82rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="container">
+    <div style="margin-bottom:10px">
+      <span class="badge badge-blue">GSoC 2026</span>
+      <span class="badge badge-green">Pre-Proposal Work</span>
+    </div>
+    <h1>Behavioral Evals, Quality, and the OSS Community for Gemini CLI</h1>
+    <p>
+      <a href="https://github.com/PewterZz/gemini-cli/tree/feat/eval-coverage-tooling">Branch: feat/eval-coverage-tooling</a>
+      &nbsp;·&nbsp; Author: <a href="https://github.com/PewterZz">PewterZz</a>
+      &nbsp;·&nbsp; Issue: <a href="https://github.com/google-gemini/gemini-cli/issues/23331">#23331</a>
+    </p>
+  </div>
+</div>
+
+<div class="main">
+<div class="container">
+
+  <!-- Stats -->
+  <div class="grid-4">
+    <div class="card">
+      <h3>Evals Written</h3>
+      <div class="big" style="color:var(--accent)">77</div>
+      <div class="sub">16 categories, 18 tools</div>
+    </div>
+    <div class="card">
+      <h3>Models Validated</h3>
+      <div class="big" style="color:var(--green)">5</div>
+      <div class="sub">via Vertex AI, March 2026</div>
+    </div>
+    <div class="card">
+      <h3>Upstream PRs</h3>
+      <div class="big" style="color:var(--purple)">7</div>
+      <div class="sub">3 evals + 4 bug fixes</div>
+    </div>
+    <div class="card">
+      <h3>Contributor Artifacts</h3>
+      <div class="big" style="color:var(--yellow)">4</div>
+      <div class="sub">3 skills + 1 subagent</div>
+    </div>
+  </div>
+
+  <!-- Validation Results -->
+  <div class="section">
+    <h2>Validation Results — All 5 Nightly Models (77 tests each)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th><th>Tests</th>
+          <th>2.5-lite</th><th>2.5-flash</th><th>2.5-pro</th>
+          <th>3-flash</th><th>3-pro</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>agent-behavior</td><td>11</td><td class="pct pct-high">91%</td><td class="pct pct-high">91%</td><td class="pct pct-mid">64%</td><td class="pct pct-high">91%</td><td class="pct pct-high">91%</td></tr>
+        <tr><td>code-review</td><td>5</td><td class="pct pct-mid">60%</td><td class="pct pct-mid">60%</td><td class="pct pct-high">100%</td><td class="pct pct-mid">80%</td><td class="pct pct-mid">80%</td></tr>
+        <tr><td>context-awareness</td><td>5</td><td class="pct pct-mid">40%</td><td class="pct pct-high">100%</td><td class="pct pct-mid">60%</td><td class="pct pct-mid">80%</td><td class="pct pct-high">100%</td></tr>
+        <tr><td>debugging</td><td>4</td><td class="pct pct-mid">50%</td><td class="pct pct-mid">50%</td><td class="pct pct-low">25%</td><td class="pct pct-mid">75%</td><td class="pct pct-mid">50%</td></tr>
+        <tr><td>edge-cases</td><td>6</td><td class="pct pct-high">100%</td><td class="pct pct-high">83%</td><td class="pct pct-high">83%</td><td class="pct pct-high">100%</td><td class="pct pct-high">100%</td></tr>
+        <tr><td>error-recovery</td><td>3</td><td class="pct pct-mid">67%</td><td class="pct pct-mid">67%</td><td class="pct pct-mid">67%</td><td class="pct pct-mid">67%</td><td class="pct pct-mid">67%</td></tr>
+        <tr><td>l3-advanced</td><td>4</td><td class="pct pct-mid">75%</td><td class="pct pct-low">25%</td><td class="pct pct-mid">50%</td><td class="pct pct-mid">75%</td><td class="pct pct-high">100%</td></tr>
+        <tr><td>large-codebase</td><td>4</td><td class="pct pct-low">25%</td><td class="pct pct-low">25%</td><td class="pct pct-low">25%</td><td class="pct pct-mid">50%</td><td class="pct pct-mid">50%</td></tr>
+        <tr><td>minimal-changes</td><td>6</td><td class="pct pct-high">83%</td><td class="pct pct-high">83%</td><td class="pct pct-high">83%</td><td class="pct pct-high">83%</td><td class="pct pct-high">83%</td></tr>
+        <tr><td>multi-file-editing</td><td>4</td><td class="pct pct-mid">50%</td><td class="pct pct-low">25%</td><td class="pct pct-mid">75%</td><td class="pct pct-mid">75%</td><td class="pct pct-mid">50%</td></tr>
+        <tr><td>multi-turn</td><td>4</td><td class="pct pct-low">25%</td><td class="pct pct-high">100%</td><td class="pct pct-mid">50%</td><td class="pct pct-mid">75%</td><td class="pct pct-mid">75%</td></tr>
+        <tr><td>performance-patterns</td><td>5</td><td class="pct pct-mid">60%</td><td class="pct pct-mid">60%</td><td class="pct pct-mid">80%</td><td class="pct pct-high">100%</td><td class="pct pct-high">100%</td></tr>
+        <tr><td>refactoring</td><td>3</td><td class="pct pct-low">0%</td><td class="pct pct-low">33%</td><td class="pct pct-mid">67%</td><td class="pct pct-low">33%</td><td class="pct pct-mid">67%</td></tr>
+        <tr><td>regression-safety</td><td>3</td><td class="pct pct-mid">67%</td><td class="pct pct-mid">67%</td><td class="pct pct-mid">67%</td><td class="pct pct-mid">67%</td><td class="pct pct-low">33%</td></tr>
+        <tr><td>tool-selection</td><td>5</td><td class="pct pct-high">100%</td><td class="pct pct-mid">60%</td><td class="pct pct-mid">60%</td><td class="pct pct-high">100%</td><td class="pct pct-high">100%</td></tr>
+        <tr><td>web-tools</td><td>5</td><td class="pct pct-mid">40%</td><td class="pct pct-mid">40%</td><td class="pct pct-mid">40%</td><td class="pct pct-mid">80%</td><td class="pct pct-mid">60%</td></tr>
+        <tr style="font-weight:700;border-top:2px solid var(--border)">
+          <td>Total</td><td>77</td>
+          <td class="pct pct-mid">63.6%</td>
+          <td class="pct pct-mid">64.9%</td>
+          <td class="pct pct-mid">63.6%</td>
+          <td class="pct pct-high gen3">80.5%</td>
+          <td class="pct pct-high gen3">79.2%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin-top:10px;font-size:0.82rem;color:var(--muted)">Generation-3 models (green) outperform generation-2.5 by ~16 points. Within generations, the ranking is non-trivial — 2.5-pro does not consistently beat 2.5-flash.</p>
+  </div>
+
+  <!-- Findings -->
+  <div class="section">
+    <h2>Key Findings from Validation</h2>
+
+    <div class="finding">
+      <h4>🔍 Tool name discrepancy</h4>
+      <p><code>google_web_search</code> (not <code>web_search</code>) and <code>list_directory</code> (not <code>ls</code>) are the correct tool names. Any eval using the documented names produces silent assertion failures. All 77 evals import constants directly from <code>base-declarations.ts</code>.</p>
+    </div>
+
+    <div class="finding">
+      <h4>🔧 Vertex AI auth gap in TestRig (fixed)</h4>
+      <p>The test rig did not pre-create <code>$HOME/.gemini/</code> before spawning the CLI, causing auth to fail silently. Fixed in commit <a href="https://github.com/PewterZz/gemini-cli/commit/61d1099">61d1099</a>.</p>
+    </div>
+
+    <div class="finding">
+      <h4>📐 Large-codebase eval design gap</h4>
+      <p>All 5 models score 25% on 3 of 4 large-codebase tests. Root cause: file paths are inferable from workspace context, so models shortcut discovery rather than using <code>grep</code>/<code>glob</code>. These tests will be redesigned with unguessable paths.</p>
+    </div>
+
+    <div class="finding">
+      <h4>⚡ Prompt change with before/after evidence</h4>
+      <p>Adding one rule to <code>snippets.ts</code> ("when file read fails, use grep/glob") improved <code>l3-advanced</code> from 25% → 50% on 2.5-flash and 75% → 100% on 3-flash. Committed as <a href="https://github.com/PewterZz/gemini-cli/commit/f876edb">f876edb</a>.</p>
+    </div>
+  </div>
+
+  <!-- Artifacts -->
+  <div class="section">
+    <h2>Contributor Artifacts</h2>
+
+    <div class="artifact">
+      <div class="artifact-icon">📊</div>
+      <div>
+        <h4><a href="https://github.com/PewterZz/gemini-cli/blob/feat/eval-coverage-tooling/scripts/eval-coverage.mjs">scripts/eval-coverage.mjs</a></h4>
+        <p>Coverage report tool — scans eval files, maps tool and category coverage, outputs a Markdown dashboard with per-tool pass rates, 7-run trends, and gaps.</p>
+      </div>
+    </div>
+
+    <div class="artifact">
+      <div class="artifact-icon">💬</div>
+      <div>
+        <h4><a href="https://github.com/PewterZz/gemini-cli/blob/feat/eval-coverage-tooling/scripts/chat-to-eval.mjs">scripts/chat-to-eval.mjs</a></h4>
+        <p>Chat-to-eval converter — reads JSONL activity logs, extracts prompts and tool call sequences, generates typed evalTest skeletons with quality scores and complexity classification.</p>
+      </div>
+    </div>
+
+    <div class="artifact">
+      <div class="artifact-icon">🛠</div>
+      <div>
+        <h4><a href="https://github.com/PewterZz/gemini-cli/tree/feat/eval-coverage-tooling/.gemini/skills/eval-gap-finder">.gemini/skills/eval-gap-finder</a>, <a href="https://github.com/PewterZz/gemini-cli/tree/feat/eval-coverage-tooling/.gemini/skills/prompt-change-validator">prompt-change-validator</a>, <a href="https://github.com/PewterZz/gemini-cli/tree/feat/eval-coverage-tooling/.gemini/skills/chat-to-eval">chat-to-eval</a></h4>
+        <p>Three contributor skills — invoke the scripts above and guide contributors through the full quality workflow. All smoke-tested against the live codebase.</p>
+      </div>
+    </div>
+
+    <div class="artifact">
+      <div class="artifact-icon">🔬</div>
+      <div>
+        <h4><a href="https://github.com/PewterZz/gemini-cli/blob/feat/eval-coverage-tooling/.gemini/agents/eval-investigator.md">.gemini/agents/eval-investigator.md</a></h4>
+        <p>Diagnostic subagent — classifies failing eval root cause into five categories (model regression, flawed assertion, infrastructure, natural variance, broken setup) with cited evidence. Read-only tools only.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- PRs -->
+  <div class="section">
+    <h2>Open PRs Against Upstream</h2>
+    <ul class="pr-list">
+      <li><span class="pr-type pr-eval">eval</span><a href="https://github.com/google-gemini/gemini-cli/pull/23415">#23415</a> — Behavioral evals for web tool selection (google_web_search vs web_fetch)</li>
+      <li><span class="pr-type pr-eval">eval</span><a href="https://github.com/google-gemini/gemini-cli/pull/23416">#23416</a> — Behavioral evals for efficient tool selection (grep over read)</li>
+      <li><span class="pr-type pr-eval">eval</span><a href="https://github.com/google-gemini/gemini-cli/pull/23418">#23418</a> — Behavioral eval for write_todos task planning</li>
+      <li><span class="pr-type pr-fix">fix</span><a href="https://github.com/google-gemini/gemini-cli/pull/23193">#23193</a> — Fix settings persistence bug (externally-added keys overwritten on save)</li>
+      <li><span class="pr-type pr-fix">fix</span><a href="https://github.com/google-gemini/gemini-cli/pull/23194">#23194</a> — Filter redirect entries from policy sub-command checks</li>
+      <li><span class="pr-type pr-fix">fix</span><a href="https://github.com/google-gemini/gemini-cli/pull/23196">#23196</a> — Guard against empty parts arrays in message inspectors</li>
+      <li><span class="pr-type pr-fix">fix</span><a href="https://github.com/google-gemini/gemini-cli/pull/23014">#23014</a> — Extend omission placeholder detector to # and /* */ comment styles</li>
+    </ul>
+  </div>
+
+</div>
+</div>
+
+<div class="footer">
+  <div class="container">
+    GSoC 2026 · <a href="https://github.com/PewterZz/gemini-cli/tree/feat/eval-coverage-tooling">PewterZz/gemini-cli @ feat/eval-coverage-tooling</a>
+  </div>
+</div>
+
+</body>
+</html>
