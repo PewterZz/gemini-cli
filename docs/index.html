@@ -72,6 +72,41 @@
   .pr-tag { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8b949e; flex-shrink: 0; width: 36px; }
 
   footer { padding: 24px 0; color: #484f58; font-size: 0.8rem; text-align: center; }
+
+  details { margin: 12px 0; border: 1px solid #21262d; border-radius: 6px; overflow: hidden; }
+  details summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    background: #161b22;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before {
+    content: "+";
+    color: #8b949e;
+    font-family: monospace;
+    font-size: 1rem;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  details[open] summary::before { content: "\2212"; }
+  details .detail-body { padding: 14px; font-size: 0.82rem; }
+  pre.json {
+    background: #0d1117;
+    padding: 14px;
+    overflow-x: auto;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: #8b949e;
+    border-top: 1px solid #21262d;
+    margin: 0;
+  }
 </style>
 </head>
 <body>
@@ -216,6 +251,123 @@
   </section>
 
 </div>
+
+  <section>
+    <h2>Raw Result Files</h2>
+    <p style="font-size:0.875rem;color:#8b949e;margin-bottom:16px">Per-model, per-category JSON output from the Vitest runner. 160 files in <code>evals/logs/results-per-file/</code>. Each file is the direct output of a single test run.</p>
+
+    <details>
+      <summary><span>gemini-2.5-flash-lite &mdash; 16 categories</span></summary>
+      <pre class="json">{
+  "agent-behavior":       { "passed": 10, "total": 11 },
+  "code-review":          { "passed":  3, "total":  5 },
+  "context-awareness":    { "passed":  2, "total":  5 },
+  "debugging":            { "passed":  2, "total":  4 },
+  "edge-cases":           { "passed":  6, "total":  6 },
+  "error-recovery":       { "passed":  2, "total":  3 },
+  "l3-advanced":          { "passed":  3, "total":  4 },
+  "large-codebase":       { "passed":  1, "total":  4 },
+  "minimal-changes":      { "passed":  5, "total":  6 },
+  "multi-file-editing":   { "passed":  2, "total":  4 },
+  "multi-turn":           { "passed":  1, "total":  4 },
+  "performance-patterns": { "passed":  3, "total":  5 },
+  "refactoring":          { "passed":  0, "total":  3 },
+  "regression-safety":    { "passed":  2, "total":  3 },
+  "tool-selection":       { "passed":  5, "total":  5 },
+  "web-tools":            { "passed":  2, "total":  5 }
+}</pre>
+    </details>
+
+    <details>
+      <summary><span>gemini-2.5-flash &mdash; 16 categories</span></summary>
+      <pre class="json">{
+  "agent-behavior":       { "passed": 10, "total": 11 },
+  "code-review":          { "passed":  3, "total":  4 },
+  "context-awareness":    { "passed":  5, "total":  5 },
+  "debugging":            { "passed":  2, "total":  3 },
+  "edge-cases":           { "passed":  3, "total":  5 },
+  "error-recovery":       { "passed":  2, "total":  3 },
+  "l3-advanced":          { "passed":  1, "total":  4 },
+  "large-codebase":       { "passed":  1, "total":  4 },
+  "minimal-changes":      { "passed":  5, "total":  6 },
+  "multi-file-editing":   { "passed":  1, "total":  4 },
+  "multi-turn":           { "passed":  4, "total":  4 },
+  "performance-patterns": { "passed":  3, "total":  4 },
+  "refactoring":          { "passed":  1, "total":  3 },
+  "regression-safety":    { "passed":  2, "total":  3 },
+  "tool-selection":       { "passed":  2, "total":  4 },
+  "web-tools":            { "passed":  4, "total":  4 }
+}</pre>
+    </details>
+
+    <details>
+      <summary><span>gemini-2.5-pro &mdash; 16 categories</span></summary>
+      <pre class="json">{
+  "agent-behavior":       { "passed":  7, "total": 11 },
+  "code-review":          { "passed":  5, "total":  5 },
+  "context-awareness":    { "passed":  3, "total":  5 },
+  "debugging":            { "passed":  1, "total":  4 },
+  "edge-cases":           { "passed":  5, "total":  6 },
+  "error-recovery":       { "passed":  2, "total":  3 },
+  "l3-advanced":          { "passed":  2, "total":  4 },
+  "large-codebase":       { "passed":  1, "total":  4 },
+  "minimal-changes":      { "passed":  5, "total":  6 },
+  "multi-file-editing":   { "passed":  3, "total":  4 },
+  "multi-turn":           { "passed":  2, "total":  4 },
+  "performance-patterns": { "passed":  4, "total":  5 },
+  "refactoring":          { "passed":  2, "total":  3 },
+  "regression-safety":    { "passed":  2, "total":  3 },
+  "tool-selection":       { "passed":  3, "total":  5 },
+  "web-tools":            { "passed":  2, "total":  5 }
+}</pre>
+    </details>
+
+    <details>
+      <summary><span>gemini-3-flash-preview &mdash; 16 categories</span></summary>
+      <pre class="json">{
+  "agent-behavior":       { "passed": 10, "total": 11 },
+  "code-review":          { "passed":  4, "total":  4 },
+  "context-awareness":    { "passed":  4, "total":  5 },
+  "debugging":            { "passed":  3, "total":  3 },
+  "edge-cases":           { "passed":  5, "total":  5 },
+  "error-recovery":       { "passed":  2, "total":  3 },
+  "l3-advanced":          { "passed":  3, "total":  4 },
+  "large-codebase":       { "passed":  2, "total":  4 },
+  "minimal-changes":      { "passed":  5, "total":  6 },
+  "multi-file-editing":   { "passed":  3, "total":  4 },
+  "multi-turn":           { "passed":  3, "total":  4 },
+  "performance-patterns": { "passed":  4, "total":  4 },
+  "refactoring":          { "passed":  1, "total":  3 },
+  "regression-safety":    { "passed":  2, "total":  3 },
+  "tool-selection":       { "passed":  4, "total":  4 },
+  "web-tools":            { "passed":  4, "total":  4 }
+}</pre>
+    </details>
+
+    <details>
+      <summary><span>gemini-3-pro-preview &mdash; 16 categories</span></summary>
+      <pre class="json">{
+  "agent-behavior":       { "passed": 10, "total": 11 },
+  "code-review":          { "passed":  4, "total":  5 },
+  "context-awareness":    { "passed":  5, "total":  5 },
+  "debugging":            { "passed":  2, "total":  4 },
+  "edge-cases":           { "passed":  6, "total":  6 },
+  "error-recovery":       { "passed":  2, "total":  3 },
+  "l3-advanced":          { "passed":  4, "total":  4 },
+  "large-codebase":       { "passed":  2, "total":  4 },
+  "minimal-changes":      { "passed":  5, "total":  6 },
+  "multi-file-editing":   { "passed":  2, "total":  4 },
+  "multi-turn":           { "passed":  3, "total":  4 },
+  "performance-patterns": { "passed":  5, "total":  5 },
+  "refactoring":          { "passed":  2, "total":  3 },
+  "regression-safety":    { "passed":  1, "total":  3 },
+  "tool-selection":       { "passed":  5, "total":  5 },
+  "web-tools":            { "passed":  3, "total":  5 }
+}</pre>
+    </details>
+
+    <p style="margin-top:12px;font-size:0.78rem;color:#484f58">Full result files: <a href="https://github.com/PewterZz/gemini-cli/tree/feat/eval-coverage-tooling/evals/logs/results-per-file">evals/logs/results-per-file/</a> (160 files)</p>
+  </section>
 
 <footer>
   <a href="https://github.com/PewterZz/gemini-cli/tree/feat/eval-coverage-tooling">PewterZz/gemini-cli @ feat/eval-coverage-tooling</a>
